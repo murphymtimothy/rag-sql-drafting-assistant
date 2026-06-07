@@ -50,17 +50,25 @@ def _extract_sql_identifiers(sql: str) -> tuple[set[str], set[str]]:
 
     tables: set[str] = set()
     columns: set[str] = set()
+    aliases: set[str] = set()
 
+    # FROM/JOIN <table> [AS] [alias] — capture both the table and any alias so the
+    # dotted-reference pass below can tell real tables apart from table aliases.
     for match in re.finditer(
-        r"(?:from|join)\s+(\w+)(?:\s+(?:as\s+)?\w+)?", sql_clean
+        r"(?:from|join)\s+(\w+)(?:\s+(?:as\s+)?(\w+))?", sql_clean
     ):
-        name = match.group(1)
+        name, alias = match.group(1), match.group(2)
         if name not in _SQL_NOISE and len(name) > 2:
             tables.add(name)
+        if alias and alias not in _SQL_NOISE:
+            aliases.add(alias)
 
+    # <ident>.<column> — the left side may be a table or a declared alias. Only
+    # treat it as a table when it is not a known alias; otherwise a multi-char
+    # alias (e.g. "lsh") would be mis-scored as a hallucinated table name.
     for match in re.finditer(r"(\w+)\.(\w+)", sql_clean):
         left, right = match.group(1), match.group(2)
-        if left not in _SQL_NOISE and len(left) > 1:
+        if left not in _SQL_NOISE and left not in aliases and len(left) > 1:
             tables.add(left)
         if right not in _SQL_NOISE and len(right) > 2:
             columns.add(right)

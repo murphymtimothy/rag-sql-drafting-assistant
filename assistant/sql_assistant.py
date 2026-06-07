@@ -34,8 +34,12 @@ def _embed(text: str) -> list[float]:
 
 def _retrieve(
     question: str, k: int, chroma_path: Path
-) -> tuple[list[str], list[str]]:
-    """Return (chunk_texts, deduplicated_citation_filenames)."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (chunk_texts, per_chunk_filenames, deduplicated_citation_filenames).
+
+    per_chunk_filenames stays index-aligned with chunk_texts so each chunk can be
+    labelled with its own source; citations is the de-duplicated list for display.
+    """
     try:
         client = chromadb.PersistentClient(path=str(chroma_path))
         collection = client.get_collection(COLLECTION)
@@ -68,7 +72,7 @@ def _retrieve(
         if f not in seen:
             seen.add(f)
             citations.append(f)
-    return chunks, citations
+    return chunks, filenames, citations
 
 
 def _extract_sql(content: str) -> str:
@@ -92,16 +96,17 @@ def answer_question(
     """
     start = time.monotonic()
     chunks: list[str] = []
+    chunk_files: list[str] = []
     citations: list[str] = []
 
     if rag_enabled:
-        chunks, citations = _retrieve(question, k, chroma_path)
+        chunks, chunk_files, citations = _retrieve(question, k, chroma_path)
 
     context_block = ""
     if chunks:
         parts = []
         for i, chunk in enumerate(chunks):
-            label = citations[i] if i < len(citations) else "unknown"
+            label = chunk_files[i] if i < len(chunk_files) else "unknown"
             parts.append(f"[Source: {label}]\n{chunk}")
         context_block = "\n\n## Schema Context\n\n" + "\n\n---\n\n".join(parts)
 

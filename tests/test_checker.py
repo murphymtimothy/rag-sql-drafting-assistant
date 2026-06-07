@@ -29,6 +29,17 @@ def test_extract_identifiers_empty_sql():
     assert tables == set()
     assert columns == set()
 
+def test_extract_identifiers_excludes_multichar_aliases():
+    # A 3-char table alias used in dotted refs must NOT be picked up as a table.
+    sql = (
+        "SELECT lsh.days_past_due FROM loan_status_history lsh "
+        "WHERE lsh.end_date IS NULL"
+    )
+    tables, columns = _extract_sql_identifiers(sql)
+    assert "loan_status_history" in tables
+    assert "lsh" not in tables
+    assert "days_past_due" in columns
+
 
 # --- _load_schema_names ---
 
@@ -61,6 +72,20 @@ def test_check_answer_partial_match(minimal_schema_docs):
     }
     out = check_answer(result, ["members", "loans"], ["member_id"], minimal_schema_docs)
     assert out["score"] == 0.5
+
+def test_check_answer_multichar_alias_not_hallucinated(minimal_schema_docs):
+    # Regression: correct query using multi-char aliases must score 1.0, not be
+    # mis-flagged as hallucinating the aliases ("mem", "ln") as table names.
+    result = {
+        "sql": (
+            "SELECT mem.member_id, ln.loan_id "
+            "FROM members mem JOIN loans ln ON mem.member_id = ln.member_id"
+        ),
+        "explanation": "Joins members to loans using multi-character aliases.",
+    }
+    out = check_answer(result, ["members", "loans"], ["member_id", "loan_id"], minimal_schema_docs)
+    assert out["score"] == 1.0
+    assert "hallucinated" not in out["reason"].lower()
 
 def test_check_answer_hallucinated_table(minimal_schema_docs):
     result = {
