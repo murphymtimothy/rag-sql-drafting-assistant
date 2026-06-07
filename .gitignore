@@ -1,0 +1,9 @@
+chroma_db/
+logs/*.jsonl
+logs/*.json
+logs/*.md
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.env
