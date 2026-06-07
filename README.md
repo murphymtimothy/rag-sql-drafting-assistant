@@ -2,6 +2,31 @@
 
 A local, fully offline SQL-drafting assistant grounded via RAG over a credit-union data warehouse schema.
 
+---
+
+## Executive brief
+
+**The problem.** Analysts spend more time figuring out *which* warehouse table and column to use — and how tables join — than writing the SQL itself. Public AI chatbots make this worse, not better: they don't know our schema, so they confidently invent table names that don't exist (*hallucination*), and they send data to the cloud — a non-starter for a financial institution.
+
+**What we built.** A SQL-drafting assistant that runs **entirely on a local machine** (no internet, no cloud, no member data) and **grounds every answer in our actual schema documentation** using Retrieval-Augmented Generation (RAG). Before the AI writes any SQL, the system retrieves the relevant table docs and hands them to the model as reference. Every answer ships with **citations** — the exact schema docs it used — so a human can verify the grounding instead of trusting it.
+
+**Does it work?** On a curated test set of 15 representative questions, grounding accuracy was:
+
+| | Mean grounding score |
+|---|---|
+| **RAG enabled** | **0.83** |
+| No RAG (baseline) | 0.07 |
+
+Same model, same questions — the only difference is whether it could see our schema. Retrieval is what turns a plausible guess into a usable, schema-correct draft. The hardest cases (cross-subject joins like "members → loans → delinquency status") scored a perfect 1.0 with RAG.
+
+**Why it's safe.** Both the AI and the embedding model run locally via Ollama — nothing leaves the machine. The POC uses fictional mock data. The path to a real warehouse extracts **schema metadata only** (never row data) over **read-only** access to system catalog views. Every query is logged for audit. Schema knowledge lives in plain files we control, not baked into model weights — so it can be reviewed, corrected, and updated without retraining.
+
+**What it is *not*.** It *drafts* SQL; it does not execute it or replace analyst review. No member-facing decisions, no auto-execution, no fine-tuning. It's a single-analyst proof-of-concept with honest limitations — see the full overview.
+
+📄 **Full detail:** [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) — comprehensive plain-English + technical writeup for leadership, analysts, and engineers.
+
+---
+
 ## What this is
 
 A personal proof-of-concept demonstrating that a local LLM (no cloud API, no member data) can draft accurate, schema-grounded SQL by retrieving relevant table/column documentation at query time. Built as a learning artifact and internal proposal evidence base.
