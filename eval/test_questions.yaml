@@ -1,0 +1,79 @@
+# 15 curated questions across single-table, cross-subject, and trick categories.
+# expected_tables: [] marks trick questions (schema doesn't contain what's asked).
+
+- question: "What columns does the members table contain?"
+  expected_tables: [members]
+  expected_columns: [member_id, first_name, last_name]
+  notes: "Single-table lookup. Establishes RAG baseline — model must name real columns."
+
+- question: "Write a query to list all members who joined the credit union in 2023."
+  expected_tables: [members]
+  expected_columns: [member_id, member_since_date]
+  notes: "Single-table with date filter. Tests correct column name retrieval."
+
+- question: "Which table tracks each member's current mailing address, and what column links it back to the member?"
+  expected_tables: [addresses]
+  expected_columns: [member_id, address_type_cd, end_date]
+  notes: "Single-table lookup — must find addresses and identify member_id as the FK."
+
+- question: "Write a query returning each active member's name and all open deposit accounts they hold."
+  expected_tables: [members, accounts]
+  expected_columns: [member_id, first_name, last_name, account_id, status_cd]
+  notes: "Cross-subject join: member/party → deposits. Tests that retrieval bridges both docs."
+
+- question: "Show the current ledger balance and available balance for all checking accounts."
+  expected_tables: [accounts, account_types]
+  expected_columns: [account_id, current_balance, available_balance, account_type_cd]
+  notes: "Deposit area join: accounts → account_types. Tests reference table retrieval."
+
+- question: "Write a query showing each member's active loans and their current delinquency status (days past due)."
+  expected_tables: [members, loans, loan_status_history]
+  expected_columns: [member_id, loan_id, days_past_due, status_cd]
+  notes: "Three-table cross-subject join. Primary difficulty test — must find loan_status_history."
+
+- question: "Find all loans that are 30 or more days past due as of today."
+  expected_tables: [loans, loan_status_history]
+  expected_columns: [loan_id, days_past_due, end_date]
+  notes: "Delinquency query. Tests awareness that days_past_due lives in loan_status_history, not loans."
+
+- question: "Which table contains the amortization schedule showing how each loan payment is split between principal and interest?"
+  expected_tables: [payment_schedules]
+  expected_columns: [loan_id, principal_portion, interest_portion, is_paid]
+  notes: "Lending lookup — must identify payment_schedules and its columns."
+
+- question: "Write a query to find all members who have a card account and show their current reward points balance."
+  expected_tables: [members, card_accounts, card_rewards]
+  expected_columns: [member_id, card_account_id, points_balance]
+  notes: "Three-table cross-subject: member → card → rewards. Tests multi-hop retrieval."
+
+- question: "How would I join card transactions to the channel reference table to get the channel name for each purchase?"
+  expected_tables: [card_transactions, ref_channel_codes]
+  expected_columns: [card_txn_id, channel_cd, channel_name]
+  notes: "Cards → reference. Tests retrieval of ref_ table when asked about channel."
+
+- question: "Write a query listing every teller transaction from the Downtown Springfield Branch in the last 30 days."
+  expected_tables: [transactions, staff, branches]
+  expected_columns: [transaction_id, teller_id, branch_id, branch_name]
+  notes: "Cross-subject: deposits → branch/channel. Multi-hop via staff.branch_id."
+
+- question: "Which table would I use to find a member's mobile phone number, and how is consent tracked?"
+  expected_tables: [contact_info]
+  expected_columns: [member_id, contact_type_cd, contact_value, is_consent_given]
+  notes: "Member/party lookup. Tests retrieval of contact_info and consent column."
+
+# Trick questions — model should explicitly decline, not hallucinate.
+
+- question: "Write a query to pull a member's investment portfolio holdings and current market value."
+  expected_tables: []
+  expected_columns: []
+  notes: "TRICK: No investment/portfolio tables exist in this schema. Must decline."
+
+- question: "Which table stores mortgage escrow payments and impound account balances?"
+  expected_tables: []
+  expected_columns: []
+  notes: "TRICK: No escrow/impound tables exist. Must decline."
+
+- question: "Show me the query for pulling a member's credit score history from our bureau pull table."
+  expected_tables: []
+  expected_columns: []
+  notes: "TRICK: No credit bureau pull table exists in this schema. Must decline."
