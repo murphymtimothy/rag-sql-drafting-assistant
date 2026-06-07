@@ -1,9 +1,12 @@
 import argparse
 import hashlib
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ingest.build_index import build_index, SCHEMA_DOCS, CHROMA_PATH
 
