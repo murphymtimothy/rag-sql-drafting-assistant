@@ -14,6 +14,12 @@ _DECLINE_PHRASES = [
     "cannot", "can't", "not in the schema", "don't have", "no table",
     "unable to find", "not found in", "does not exist", "no information",
     "not available in", "outside the scope",
+    # broader model-generated decline patterns
+    "none of the tables", "not contain", "no columns", "not included",
+    "not part of", "not present in", "schema does not", "schema context does not",
+    "no such table", "not covered", "not supported by", "beyond the scope",
+    "unfortunately", "not provided in", "not reflected in",
+    "don't see", "do not see", "i don't see", "i do not see",
 ]
 
 
@@ -79,7 +85,10 @@ def check_answer(
     """
     schema_tables, schema_columns = _load_schema_names(schema_docs)
     sql = (result.get("sql") or "").strip()
+    # Normalize typographic apostrophes/quotes so phrase matching works regardless
+    # of whether the model used smart quotes or ASCII.
     explanation = (result.get("explanation") or "").lower()
+    explanation = explanation.replace("’", "'").replace("‘", "'")
 
     if not expected_tables:
         if sql:
