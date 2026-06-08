@@ -20,5 +20,14 @@
 application_id
 
 ## Foreign keys / relationships
+
+**Outbound (loan_applications → other tables):**
 - `member_id` → `members.member_id`
 - `loan_type_cd` → `loan_types.loan_type_cd`
+
+**Referenced by (other tables → loan_applications.application_id):**
+- `loans.application_id` (a funded loan originates from an approved application)
+
+**Common join paths:**
+- Application → funded loan: `loan_applications` → `loans` (application_id). Not every application becomes a loan (decision_cd may be DENIED / WITHDRAWN / PENDING).
+- Applicant and requested product: `loan_applications` → `members` and → `loan_types`.

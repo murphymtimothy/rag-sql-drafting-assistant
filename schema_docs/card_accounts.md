@@ -19,5 +19,15 @@
 card_account_id
 
 ## Foreign keys / relationships
+
+**Outbound (card_accounts → other tables):**
 - `member_id` → `members.member_id`
 - `status_cd` → `ref_status_codes.status_cd` (filter entity_type = 'CARD')
+
+**Referenced by (other tables → card_accounts.card_account_id):**
+- `card_transactions.card_account_id` (purchases / payments / refunds)
+- `card_rewards.card_account_id` (point-earning / redemption ledger)
+
+**Common join paths:**
+- Member's cards and reward points (cross-subject): `members` → `card_accounts` → `card_rewards` (read points_balance from the latest row, not MAX/SUM — see card_rewards).
+- Member's card spend: `members` → `card_accounts` → `card_transactions`; channel name via → `ref_channel_codes`.

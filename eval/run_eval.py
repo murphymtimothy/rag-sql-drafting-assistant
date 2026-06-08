@@ -9,7 +9,17 @@ import yaml
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from assistant.sql_assistant import answer_question, log_result, CHROMA_PATH, LOGS_PATH, DEFAULT_MODEL
+from assistant.sql_assistant import (
+    answer_question,
+    log_result,
+    CHROMA_PATH,
+    LOGS_PATH,
+    DEFAULT_MODEL,
+    EMBED_MODEL,
+    RERANKER_MODEL,
+    DEFAULT_K,
+    _retrieval_mode,
+)
 from eval.checker import check_answer, SCHEMA_DOCS
 
 TEST_QUESTIONS = Path(__file__).parent / "test_questions.yaml"
@@ -75,6 +85,9 @@ def _build_report(rows: list[dict], rag_scores: list, no_rag_scores: list, model
     lines = [
         "# SQL Assistant Eval Report",
         f"Generated: {ts} | Model: {model}",
+        "",
+        f"**Retrieval config:** embed=`{EMBED_MODEL}` · Top-K={DEFAULT_K} · "
+        f"reranker=`{RERANKER_MODEL}` · mode: {_retrieval_mode()}",
         "",
         "## Summary",
         "",

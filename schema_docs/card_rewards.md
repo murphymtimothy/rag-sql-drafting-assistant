@@ -19,7 +19,15 @@
 reward_id
 
 ## Foreign keys / relationships
+
+**Outbound (card_rewards → other tables):**
 - `card_account_id` → `card_accounts.card_account_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- A card's current reward points (cross-subject): `card_accounts` → `card_rewards`; take points_balance from the latest row by transaction_date DESC, reward_id DESC (see Naming conventions — never MAX/SUM).
+- Member's points: `members` → `card_accounts` → `card_rewards`.
 
 ## Naming conventions
 - `points_balance` is a running ledger total carried on each row, not a per-event amount. To read the balance **as of any point in time** (e.g. current, or end-of-month), take the last row up to that cutoff ordered by `transaction_date DESC, reward_id DESC`. Never derive a balance with `MAX(points_balance)` or `SUM(points_balance)` — the running total already accounts for prior events, and MAX returns the high-water mark, not the closing balance.

@@ -18,7 +18,14 @@
 contact_id
 
 ## Foreign keys / relationships
+
+**Outbound (contact_info → other tables):**
 - `member_id` → `members.member_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Member's phone/email with consent: `members` → `contact_info` (filter contact_type_cd, e.g. 'PHONE_MOBILE'; is_consent_given / is_primary as needed).
 
 ## Naming conventions
 - `is_` prefix indicates a boolean flag stored as BIT (0/1).

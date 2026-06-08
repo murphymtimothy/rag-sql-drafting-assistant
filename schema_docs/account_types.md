@@ -17,4 +17,11 @@
 account_type_cd
 
 ## Foreign keys / relationships
-*(none — this is a reference/lookup table)*
+
+**Outbound:** *(none — this is a reference/lookup table)*
+
+**Referenced by (other tables → account_types.account_type_cd):**
+- `accounts.account_type_cd`
+
+**Common join paths:**
+- Resolve a deposit account's product name and features: `accounts` → `account_types`.

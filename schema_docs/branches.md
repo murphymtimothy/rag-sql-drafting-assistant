@@ -18,4 +18,14 @@
 branch_id
 
 ## Foreign keys / relationships
+
+**Outbound (branches → other tables):**
 - `address_id` → `addresses.address_id`
+
+**Referenced by (other tables → branches.branch_id):**
+- `staff.branch_id` (employees assigned to the branch)
+
+**Common join paths:**
+- Staff at a named branch: `branches` → `staff` (active = WHERE staff.end_date IS NULL).
+- Teller transactions at a branch (cross-subject): `branches` → `staff` → `transactions` ON transactions.teller_id = staff.staff_id.
+- Branch location / address: `branches` → `addresses`.

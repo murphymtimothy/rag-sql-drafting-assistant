@@ -21,6 +21,15 @@
 transaction_id
 
 ## Foreign keys / relationships
+
+**Outbound (transactions → other tables):**
 - `account_id` → `accounts.account_id`
 - `channel_cd` → `ref_channel_codes.channel_cd`
 - `teller_id` → `staff.staff_id` (NULL for non-branch transactions)
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Channel name for a posting: `transactions` → `ref_channel_codes` (channel_name, is_digital).
+- Teller transactions by branch (cross-subject): `transactions` → `staff` ON teller_id = staff_id → `branches` ON staff.branch_id = branch_id. teller_id is NULL for digital/ATM, so this path is an INNER join only for branch-initiated activity.
+- Account owner: `transactions` → `accounts` → `members`.

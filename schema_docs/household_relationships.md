@@ -17,5 +17,12 @@
 relationship_id
 
 ## Foreign keys / relationships
+
+**Outbound (household_relationships → other tables):**
 - `member_id_primary` → `members.member_id`
 - `member_id_related` → `members.member_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Member-to-member links (joint owner, beneficiary, POA, dependent): self-join `members` twice — once on `member_id_primary`, once on `member_id_related`. Both columns point at `members.member_id`, so alias `members` separately for each side.

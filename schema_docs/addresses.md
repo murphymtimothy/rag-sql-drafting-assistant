@@ -22,7 +22,16 @@
 address_id
 
 ## Foreign keys / relationships
+
+**Outbound (addresses → other tables):**
 - `member_id` → `members.member_id`
+
+**Referenced by (other tables → addresses.address_id):**
+- `branches.address_id` (a branch's physical address is an addresses row)
+
+**Common join paths:**
+- Member's current mailing address: `members` → `addresses` (filter WHERE end_date IS NULL; address_type_cd as needed).
+- Branch location: `branches` → `addresses` (branch street/city/state).
 
 ## Naming conventions
 - To get the current address: filter WHERE end_date IS NULL.

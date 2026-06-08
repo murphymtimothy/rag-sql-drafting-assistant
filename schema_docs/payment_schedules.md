@@ -20,7 +20,15 @@
 schedule_id
 
 ## Foreign keys / relationships
+
+**Outbound (payment_schedules → other tables):**
 - `loan_id` → `loans.loan_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- A loan's amortization schedule (principal/interest split per payment): `loans` → `payment_schedules`.
+- A member's upcoming or missed payments (cross-subject): `members` → `loans` → `payment_schedules` (missed = WHERE is_paid = 0 AND due_date < GETDATE()).
 
 ## Naming conventions
 - payment_amount = principal_portion + interest_portion (no escrow in this schema).

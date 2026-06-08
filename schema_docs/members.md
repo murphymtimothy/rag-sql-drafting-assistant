@@ -19,7 +19,18 @@
 member_id
 
 ## Foreign keys / relationships
+
+**Outbound (members → other tables):**
 - `status_cd` → `ref_status_codes.status_cd` (filter entity_type = 'MEMBER')
+
+**Referenced by (other tables → members.member_id):**
+- `addresses.member_id`, `contact_info.member_id`, `accounts.member_id`, `loan_applications.member_id`, `loans.member_id`, `card_accounts.member_id`
+- `household_relationships.member_id_primary` and `household_relationships.member_id_related` (member-to-member links)
+
+**Common join paths (members is the hub of most cross-subject queries):**
+- Deposits: `members` → `accounts` (→ `account_types` for the product name; → `transactions` for postings; → `holds` for available-balance detail).
+- Lending / delinquency: `members` → `loans` → `loan_status_history` (current row WHERE end_date IS NULL gives status_cd and days_past_due).
+- Cards / rewards: `members` → `card_accounts` → `card_rewards` (points_balance) or → `card_transactions` (spend).
 
 ## Naming conventions
 - `_cd` suffix indicates a code that resolves against a reference table.

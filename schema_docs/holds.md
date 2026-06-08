@@ -19,7 +19,14 @@
 hold_id
 
 ## Foreign keys / relationships
+
+**Outbound (holds → other tables):**
 - `account_id` → `accounts.account_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Active holds reducing an account's available balance: `accounts` → `holds` (active = WHERE release_date IS NULL).
 
 ## Naming conventions
 - Active holds: filter WHERE release_date IS NULL.

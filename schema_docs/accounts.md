@@ -20,9 +20,21 @@
 account_id
 
 ## Foreign keys / relationships
+
+**Outbound (accounts → other tables):**
 - `member_id` → `members.member_id`
 - `account_type_cd` → `account_types.account_type_cd`
 - `status_cd` → `ref_status_codes.status_cd` (filter entity_type = 'ACCOUNT')
+
+**Referenced by (other tables → accounts.account_id):**
+- `transactions.account_id` (postings)
+- `holds.account_id` (active/historical holds)
+
+**Common join paths:**
+- Account product name: `accounts` → `account_types` (account_type_name).
+- Member's open deposit accounts: `members` → `accounts` (open = WHERE closed_date IS NULL; active = status_cd 'ACTIVE').
+- Available vs. ledger balance detail: `accounts` → `holds` (active holds WHERE release_date IS NULL).
+- Postings / statement lines: `accounts` → `transactions`; channel name via `transactions` → `ref_channel_codes`.
 
 ## Naming conventions
 - available_balance = current_balance minus sum of active holds.amount from the holds table.

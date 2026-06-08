@@ -19,7 +19,17 @@
 staff_id
 
 ## Foreign keys / relationships
+
+**Outbound (staff → other tables):**
 - `branch_id` → `branches.branch_id`
+
+**Referenced by (other tables → staff.staff_id):**
+- `transactions.teller_id` (branch-initiated deposit transactions; NULL for digital/ATM)
+- `loan_status_history.recorded_by` (who recorded a loan status change)
+
+**Common join paths:**
+- Teller activity by branch (cross-subject): `transactions` → `staff` (teller_id) → `branches`.
+- Loan status changes by employee: `loan_status_history` → `staff` (recorded_by) → `branches`.
 
 ## Naming conventions
 - Current employees: WHERE end_date IS NULL.

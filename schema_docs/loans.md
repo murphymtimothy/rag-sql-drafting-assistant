@@ -22,10 +22,21 @@
 loan_id
 
 ## Foreign keys / relationships
+
+**Outbound (loans → other tables):**
 - `application_id` → `loan_applications.application_id`
 - `member_id` → `members.member_id`
 - `loan_type_cd` → `loan_types.loan_type_cd`
 - `status_cd` → `ref_status_codes.status_cd` (filter entity_type = 'LOAN')
+
+**Referenced by (other tables → loans.loan_id):**
+- `payment_schedules.loan_id` (amortization rows)
+- `loan_status_history.loan_id` (status / delinquency time series)
+
+**Common join paths:**
+- Delinquency / days past due (cross-subject, the primary hard case): `members` → `loans` → `loan_status_history` (current row WHERE end_date IS NULL gives status_cd and days_past_due). days_past_due lives in loan_status_history, NOT in loans.
+- Amortization / principal-vs-interest split: `loans` → `payment_schedules`.
+- Loan product name: `loans` → `loan_types`. Originating application: `loans` → `loan_applications`.
 
 ## Naming conventions
 - interest_rate is stored as a decimal fraction, not a percentage string.

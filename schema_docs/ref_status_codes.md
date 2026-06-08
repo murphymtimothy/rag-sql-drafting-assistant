@@ -17,7 +17,17 @@
 (status_cd, entity_type) — composite
 
 ## Foreign keys / relationships
-*(none — reference/lookup table)*
+
+**Outbound:** *(none — reference/lookup table)*
+
+**Referenced by (other tables → ref_status_codes.status_cd, always with the matching entity_type):**
+- `members.status_cd` (entity_type = 'MEMBER')
+- `accounts.status_cd` (entity_type = 'ACCOUNT')
+- `loans.status_cd` and `loan_status_history.status_cd` (entity_type = 'LOAN')
+- `card_accounts.status_cd` (entity_type = 'CARD')
+
+**Common join paths:**
+- Resolve any status code to its name: join ON status_cd AND entity_type (the composite key) — e.g. `loans` → `ref_status_codes` ON loans.status_cd = ref.status_cd AND ref.entity_type = 'LOAN'. Always include the entity_type filter, or the same code value (e.g. 'ACTIVE') will collide across entities.
 
 ## Naming conventions
 - Always filter by entity_type when joining: e.g., WHERE entity_type = 'LOAN'.

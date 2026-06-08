@@ -19,4 +19,12 @@ channel_cd
 BRANCH = Branch Teller (is_digital=0), ATM = ATM (is_digital=0), ONLINE = Online Banking (is_digital=1), MOBILE = Mobile App (is_digital=1), CARD_PRESENT = Card POS (is_digital=0), CARD_NOT_PRESENT = Card CNP/online (is_digital=1)
 
 ## Foreign keys / relationships
-*(none — reference/lookup table)*
+
+**Outbound:** *(none — reference/lookup table)*
+
+**Referenced by (other tables → ref_channel_codes.channel_cd):**
+- `transactions.channel_cd` (deposit postings)
+- `card_transactions.channel_cd` (card transactions)
+
+**Common join paths:**
+- Resolve a transaction's channel name: `transactions` → `ref_channel_codes` or `card_transactions` → `ref_channel_codes` (channel_name, is_digital).

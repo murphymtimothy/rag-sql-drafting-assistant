@@ -1,7 +1,8 @@
 # Model Selection — Local LLM Bake-off
 
 **Date:** 2026-06-08
-**Decision:** the default generation model is **`qwen2.5-coder:7b`**.
+**Decision (bake-off):** of the five models evaluated, **`qwen2.5-coder:7b`** scored best on the balance of grounding, refusal safety, speed, and consistency.
+**Operational default (updated 2026-06-08, Open WebUI overhaul):** **`qwen2.5-coder:14b`**. The 7b and 14b were *statistically tied* on grounding (0.893 vs 0.900); the 14b is now the default for extra headroom on the larger on-prem schema (Redwood disambiguation), and it fits 16 GB at Q4_K_M (~9 GB). 7b remains a fast, fully-supported alternative — pass `model="qwen2.5-coder:7b"`.
 **Constraints:** fully local (Ollama, no cloud — this is a credit-union data tool), single workstation with **~16 GB GPU VRAM**.
 
 ---

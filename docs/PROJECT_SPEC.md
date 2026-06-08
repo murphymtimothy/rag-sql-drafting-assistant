@@ -131,12 +131,11 @@ poc-sql-assistant/
 
 **File:** `ingest/build_index.py`
 
-**Stack:** LlamaIndex `SimpleDirectoryReader` → chunk → `OllamaEmbedding` (`nomic-embed-text`) → `ChromaVectorStore` (persistent).
+**Stack:** flat per-file `Document` load → `OllamaEmbedding` (`bge-m3`) → `ChromaVectorStore` (persistent).
 
-**Key parameters vs. personal guide §13 defaults:**
-- **Chunk size:** 1024 tokens (larger than §13's 512 default — schema docs have a natural per-table unit and should ideally be retrieved whole rather than split mid-column-list)
-- **Chunk overlap:** 128 tokens
-- **Source metadata:** doc filename and table name preserved on every chunk — this is what the citation feature reads back at query time
+**Key parameters:**
+- **One chunk per table doc:** each `.md` is loaded as a single flat document (`CHUNK_SIZE=8192`, overlap 0, **no** markdown-header splitting), so a table's documentation is never split mid-column-list. This is the retrieval-parity requirement with Open WebUI.
+- **Source metadata:** doc filename and table name preserved on every chunk — this is what the citation feature reads back at query time, and the stable key BM25 + dense fusion join on.
 
 **Rebuild strategy:** full wipe and re-embed on every invocation. At 15-20 small docs this takes seconds, and full rebuild avoids stale-chunk bugs (renamed/deleted tables lingering in the index) that incremental approaches introduce.
 
@@ -150,12 +149,12 @@ poc-sql-assistant/
 
 **Steps:**
 
-1. **Retrieval (RAG-on only):** embed the question using `nomic-embed-text` (same embedding space as the index); query Chroma for top-k chunks (k=5, configurable); extract chunk text and source metadata.
+1. **Retrieval (RAG-on only):** hybrid — embed the question using `bge-m3` and query Chroma for dense candidates; in parallel run BM25 sparse search over `schema_docs/`; fuse the two ranked lists via Reciprocal Rank Fusion; rerank with the `bge-reranker-v2-m3` cross-encoder down to top-k (k=5, configurable); extract chunk text and source metadata. Degrades to dense-only if BM25/reranker deps are absent.
 2. **Prompt construction:**
    - **System prompt:** frames the assistant as a SQL-drafting assistant for the credit union warehouse; explicitly instructs it to reference only tables/columns in the provided schema context; explicitly instructs it to say so if it cannot answer from the context rather than guessing. That "say so" instruction is itself an eval target.
    - **Context block (RAG-on):** retrieved chunk texts, formatted with their source table names.
    - **User turn:** the question.
-3. **Generation:** via the OpenAI-compatible client (`localhost:11434/v1`), requesting SQL + a short explanation of join logic/assumptions. Model is configurable (defaults to `qwen2.5-coder:7b`, selected via a five-model bake-off — see `docs/model-selection.md`). The system prompt pins the target dialect to Microsoft SQL Server (T-SQL); reasoning-style models such as `gpt-oss` are run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window.
+3. **Generation:** via the OpenAI-compatible client (`localhost:11434/v1`), requesting SQL + a short explanation of join logic/assumptions. Model is configurable (defaults to `qwen2.5-coder:14b`; the five-model bake-off found 7b and 14b statistically tied, and 14b is the operational default for on-prem headroom — see `docs/model-selection.md`). The system prompt is the verbatim Section 5.1 T-SQL grounding prompt; reasoning-style models such as `gpt-oss` are run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window.
 4. **Citation extraction:** source table names and filenames from retrieved chunks, attached to the result. RAG-off produces an empty citation list — this difference is itself a visible, demonstrable output.
 5. **Return value:**
    ```python
@@ -240,7 +239,7 @@ Output: a markdown table (RAG-on score, RAG-off score, delta, citations) + summa
   "explanation": "...",
   "citations": ["loans.md", "members.md"],
   "latency_ms": 1840,
-  "model": "qwen2.5-coder:7b",
+  "model": "qwen2.5-coder:14b",
   "eval_score": 1.0,
   "eval_reason": "All expected tables and columns present",
   "chunk_count": 5
@@ -286,10 +285,10 @@ Output: a markdown table (RAG-on score, RAG-off score, delta, citations) + summa
 
 ## Section 8: Open WebUI integration
 
-The same `schema_docs/` folder is wired into Open WebUI's "Knowledge" feature for a conversational GUI layer. To match the scripted pipeline's grounding quality:
+Open WebUI is the **off-the-shelf team GUI** (not a custom front end), wired to the same `schema_docs/` folder via its "Knowledge" feature. The full, reproducible configuration lives in [`OPEN_WEBUI_SETUP.md`](OPEN_WEBUI_SETUP.md); in brief, to match the scripted pipeline's grounding quality:
 
-- **Admin Panel → Settings → Documents:** embedding engine **Ollama** / `nomic-embed-text`; **Token** text-splitter, chunk size **1024**, markdown-header splitting **off** (so each table doc stays whole); **Top K 5**; enable **hybrid search** + a reranking model (e.g. `BAAI/bge-reranker-v2-m3`). Then create a Knowledge Base and upload the docs. Re-upload + reindex whenever `schema_docs/` changes.
-- **Workspace → Models:** create a model on **`qwen2.5-coder:7b`**, paste the grounding system prompt (only reference tables/columns present in the context; decline when they're absent; **target Microsoft SQL Server / T-SQL**), attach the Knowledge Base, and set context length ≥ 8192.
+- **Admin Panel → Settings → Documents:** embedding engine **Ollama** / `bge-m3`; **Token** text-splitter, chunk size large enough that a table doc stays in **one chunk**, markdown-header splitting **off**; **Top K 5**; **hybrid search ON**; reranking model **`bge-reranker-v2-m3`**. Then create the `Schema Docs` Knowledge Base and upload the docs. Re-upload + reindex whenever `schema_docs/` changes.
+- **Workspace → Models:** create a model on **`qwen2.5-coder:14b`**, paste the verbatim Section 5.1 grounding system prompt, attach the Knowledge Base, and set context length ≥ 8192. Scope a chat with `#Schema Docs`.
 
 This provides a conversational GUI layer for interactive use or demos.
 

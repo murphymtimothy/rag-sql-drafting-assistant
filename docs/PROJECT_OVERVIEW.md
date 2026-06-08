@@ -76,7 +76,7 @@ A small, self-contained system with six parts that work together:
               ▼
    ┌─────────────────────┐      ┌──────────────────────┐
    │   The assistant      │◀────▶│  Local LLM (Ollama)  │   Runs on the workstation.
-   │  answer_question()   │      │  qwen2.5-coder:7b    │   Nothing leaves the machine.
+   │  answer_question()   │      │  qwen2.5-coder:14b   │   Nothing leaves the machine.
    └──────────┬──────────┘      └──────────────────────┘
               │ returns SQL + explanation + CITATIONS
               ▼
@@ -91,7 +91,7 @@ A small, self-contained system with six parts that work together:
    • Logging       — every query recorded for audit and analysis
 ```
 
-**The technology stack**, in one line: **Ollama** (runs the AI models locally) · **LlamaIndex** (handles document ingestion) · **ChromaDB** (the searchable vector store) · the **OpenAI Python SDK pointed at Ollama** (so we talk to the local model with a standard, well-understood interface) · **Python 3.11+**.
+**The technology stack**, in one line: **Ollama** (runs the AI models locally) · **Open WebUI** (the off-the-shelf team GUI — see [`docs/OPEN_WEBUI_SETUP.md`](OPEN_WEBUI_SETUP.md)) · **LlamaIndex** (handles document ingestion) · **ChromaDB** (the searchable vector store) · **`bge-m3`** embedder + **`bge-reranker-v2-m3`** reranker · the **OpenAI Python SDK pointed at Ollama** (so we talk to the local model with a standard, well-understood interface) · **Python 3.11+**.
 
 Crucially, **all compute stays on the local machine, and the POC uses entirely fictional mock data** — no real member information is ever involved.
 
@@ -105,8 +105,8 @@ If you read one technical section, read this one — it's the heart of the proje
 
 **The mechanics, step by step:**
 
-1. **Embed the question.** The user's question ("show each member's active loans and delinquency status") is converted into a list of numbers — an *embedding* — that captures its meaning. We use a dedicated embedding model (`nomic-embed-text`) for this.
-2. **Search by meaning.** That embedding is compared against the pre-computed embeddings of every schema-doc chunk in ChromaDB. The system returns the **top 5 most semantically similar** chunks — e.g., the docs for `members`, `loans`, and `loan_status_history`. This is *semantic* search: it finds "loan_status_history tracks delinquency" even though the question said "delinquency" and the doc said "days past due."
+1. **Embed the question.** The user's question ("show each member's active loans and delinquency status") is converted into a list of numbers — an *embedding* — that captures its meaning. We use a dedicated embedding model (`bge-m3`) for this.
+2. **Search by meaning (hybrid + rerank).** That embedding is compared against the pre-computed embeddings of every schema-doc chunk in ChromaDB (dense search), and in parallel a **BM25** keyword search runs over the same docs (sparse search). The two ranked lists are fused (Reciprocal Rank Fusion), then a cross-encoder reranker (`bge-reranker-v2-m3`) re-scores the candidates by actual relevance, yielding the **top 5** chunks — e.g., the docs for `members`, `loans`, and `loan_status_history`. Dense search finds "loan_status_history tracks delinquency" even when the question said "delinquency" and the doc said "days past due"; the reranker is what separates the right table from look-alikes at scale.
 3. **Build a grounded prompt.** Those retrieved docs are pasted into the prompt as a **Schema Context** block, prefixed with their source filenames, alongside a system instruction that says, in effect: *"Only use tables and columns that appear in this context. If the context doesn't contain the answer, say so — do not guess."*
 4. **Generate.** The local LLM writes the SQL plus a short explanation of the join logic and any assumptions.
 5. **Cite.** The system attaches the list of source documents it retrieved (`loans.md`, `members.md`, …) to the answer. The analyst can open those exact files to verify the grounding.
@@ -147,22 +147,21 @@ The mock docs are **clearly fictional** and intentionally interchangeable with d
 
 ### 5.2 Ingestion pipeline (`ingest/build_index.py`)
 
-Reads every `.md` file, splits each into chunks, converts chunks to embeddings via Ollama's `nomic-embed-text`, and persists them to a ChromaDB collection.
+Reads every `.md` file as a single flat document, converts it to an embedding via Ollama's `bge-m3`, and persists it to a ChromaDB collection.
 
 Key parameter choices:
-- **Chunk size: 1024 tokens** (larger than the typical 512 default). A schema doc has a natural per-table unit; we want a table retrieved whole rather than split mid-column-list.
-- **Chunk overlap: 128 tokens**, so context isn't lost at chunk boundaries.
-- **Source metadata** (filename / table name) is attached to every chunk — this is precisely what the citation feature reads back at query time.
+- **One chunk per table doc.** Each `.md` is loaded whole (`CHUNK_SIZE=8192`, overlap 0, **no** markdown-header splitting), so a table's documentation is never split mid-column-list. This is the retrieval-parity requirement with Open WebUI (§5.7 / setup doc): both paths chunk identically.
+- **Source metadata** (filename / table name) is attached to every chunk — this is precisely what the citation feature reads back at query time, and the stable key that BM25 + dense fusion join on.
 
 **Rebuild strategy: full wipe and re-embed on every run.** At 20 small docs this takes seconds, and a clean rebuild avoids an entire class of stale-index bugs (a renamed or deleted table lingering as a ghost chunk). If the rebuild produces zero chunks, it raises an error rather than silently leaving an empty index — an empty index is a configuration failure, not a model-quality problem, and should look like one.
 
 ### 5.3 The assistant core (`assistant/sql_assistant.py`)
 
-The central `answer_question(question, rag_enabled=True, model="qwen2.5-coder:7b", k=5, ...)` function:
+The central `answer_question(question, rag_enabled=True, model="qwen2.5-coder:14b", k=5, ...)` function:
 
-1. **Retrieval (RAG-on only):** embeds the question, queries Chroma for the top-`k` (default 5) chunks, extracts chunk text and **de-duplicated** source filenames.
+1. **Retrieval (RAG-on only):** hybrid retrieval — dense (Chroma + `bge-m3`) fused with BM25 sparse via RRF, then reranked by `bge-reranker-v2-m3` down to the top-`k` (default 5) chunks; extracts chunk text and **de-duplicated** source filenames. Degrades gracefully to dense-only if the reranker/BM25 deps aren't installed.
 2. **Prompt construction:** a system prompt that frames the assistant, forbids inventing names, and *requires* it to decline when the context is insufficient; a Schema Context block of the retrieved chunks (each tagged with its source); and the user's question.
-3. **Generation:** via the OpenAI-compatible client pointed at `localhost:11434/v1` (Ollama). The model is configurable; the default is the code-specialized `qwen2.5-coder:7b` (chosen via a five-model bake-off, §6). Reasoning-style models such as `gpt-oss` are detected and run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window — a non-reasoning coder model needs no such handling.
+3. **Generation:** via the OpenAI-compatible client pointed at `localhost:11434/v1` (Ollama). The model is configurable; the default is the code-specialized `qwen2.5-coder:14b` — a non-reasoning coder model (the bake-off in §6 evaluated five models; 7b and 14b were statistically tied, and 14b is the operational default for extra headroom on the larger on-prem schema). Reasoning-style models such as `gpt-oss` are detected and run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window — the coder default needs no such handling, which is why the "no output" bug doesn't occur.
 4. **Citation + SQL extraction:** pulls the SQL out of the model's ```` ```sql ```` code block and attaches the citation list. **RAG-off deliberately produces an empty citation list** — that visible difference is itself a demonstrable output.
 5. **Returns one dictionary** with: `question`, `rag_enabled`, `sql`, `explanation`, `citations`, `raw_chunks` (full retrieved text, for transparency), `chunk_count`, `latency_ms`, `model`, `timestamp`, and `eval_score`/`eval_reason` (left null for interactive runs, filled in by the eval harness).
 
@@ -228,12 +227,14 @@ Every `answer_question()` call appends one JSON record to `logs/queries.jsonl` (
 
 ## 6. Does it actually work? The evidence
 
-The assistant was evaluated across **five local models**, RAG-on vs. RAG-off, scored by the (now hardened — §5.4) grounding checker. The default, **`qwen2.5-coder:7b`**, won on the balance of grounding accuracy, refusal safety, speed, and consistency. Full methodology and the five-model table are in [`docs/model-selection.md`](model-selection.md); the headline for the chosen model (`logs/eval_report.md`):
+The assistant was evaluated across **five local models**, RAG-on vs. RAG-off, scored by the (now hardened — §5.4) grounding checker. Full methodology and the five-model table are in [`docs/model-selection.md`](model-selection.md). The headline from the bake-off (`qwen2.5-coder:7b`, which was statistically tied with the 14b now used as the operational default):
 
-| | Mean grounding score |
+| | Mean grounding score (qwen2.5-coder:7b) |
 |---|---|
 | **RAG enabled** | **0.89** (5-run average; an individual run scored 0.97) |
 | No RAG (baseline) | 0.30 |
+
+Rerun `python eval/run_eval.py` to regenerate `logs/eval_report.md` for the current default (`qwen2.5-coder:14b`) and the current hybrid+rerank retrieval config; the report header records exactly which retrieval mode ran.
 
 **What this means in plain terms:** with the schema docs in front of it, the model wrote correctly-grounded SQL — referencing real tables, and the right ones — on essentially every question. Without them, grounding collapsed. The model and the questions were identical in both runs. **Retrieval is the entire difference.**
 
@@ -257,7 +258,7 @@ We're stating these plainly because an honest POC is more useful than an oversol
 3. **Quality depends entirely on the docs.** RAG is only as good as the knowledge base. Thin or wrong schema documentation produces thin or wrong SQL. (The extraction script's TODO-placeholder behavior is the first line of defense here.)
 4. **Single-machine, single-user scale.** Performance and concurrency for many simultaneous users are unaddressed; this runs on one workstation via Ollama, not a served inference stack.
 5. **Small, hand-built test set.** 15 questions is enough to demonstrate the effect convincingly, not enough to be a statistically robust benchmark.
-6. **Model dependence.** Results are tied to the local model. `qwen2.5-coder:7b` was chosen from a five-model bake-off ([`docs/model-selection.md`](model-selection.md)); a different local model shifts the numbers — sometimes sharply, as the bake-off showed.
+6. **Model dependence.** Results are tied to the local model. The default is `qwen2.5-coder:14b` (statistically tied with the 7b in the five-model bake-off, [`docs/model-selection.md`](model-selection.md)); a different local model shifts the numbers — sometimes sharply, as the bake-off showed.
 
 ---
 
@@ -291,8 +292,9 @@ This is the part leadership and risk should weigh most.
 pip install -r requirements.txt
 
 # Prerequisites: Ollama running locally, with models pulled:
-#   ollama pull qwen2.5-coder:7b
-#   ollama pull nomic-embed-text
+#   ollama pull qwen2.5-coder:14b
+#   ollama pull bge-m3
+# (bge-reranker-v2-m3 is downloaded automatically by sentence-transformers on first use.)
 
 python ingest/build_index.py            # build the index from schema docs
 python assistant/sql_assistant.py       # interactive chat
@@ -319,15 +321,15 @@ If this graduates from proof-of-concept to a real internal tool, the natural pro
 1. **Point at the real warehouse.** Run the extraction script against production catalog views, fill in the TODO-flagged documentation gaps, re-index. The pipeline is already built for this.
 2. **Schedule the refresh.** Register `refresh_scheduler.py --once` as a nightly Task Scheduler / cron job so the index tracks schema changes automatically.
 3. **Harden the evaluation.** Expand the test set, and replace the regex checker with a proper SQL parser (and ideally a "does it actually execute against a schema?" check) for trustworthy quality metrics.
-4. **Add a friendly front-end.** A thin conversational GUI (e.g., Open WebUI wired to the same schema-doc knowledge base) over the *already-validated* core. The scripted path and eval harness remain the ground truth for correctness; the GUI is just how it's made pleasant to use.
-5. **Consider scale, if needed.** Multi-user serving would mean moving from Ollama to a served inference stack — only worth it if usage justifies it.
-6. **Operational footprint stays modest.** The whole stack is local and lightweight: a 7B code-specialized model (~5 GB, comfortable on a 16 GB GPU) and a small embedding model on a capable workstation, a few seconds to rebuild a small index, plain files for everything else. No cloud spend, no per-query API cost.
+4. **The team front-end is already chosen: Open WebUI.** The off-the-shelf GUI is wired to the same schema-doc knowledge base over the *already-validated* core — no custom UI to build or maintain. The scripted path and eval harness remain the ground truth for correctness; the GUI is just how it's made pleasant to use. Setup is reproducible from [`docs/OPEN_WEBUI_SETUP.md`](OPEN_WEBUI_SETUP.md).
+5. **Consider scale, if needed.** Multi-user serving would mean swapping Ollama for a served inference stack (e.g., vLLM) behind the same OpenAI-compatible front end — only worth it if usage justifies it, and it requires no change to the GUI. See [`docs/PORTING_TO_ONPREM.md`](PORTING_TO_ONPREM.md).
+6. **Operational footprint stays modest.** The whole stack is local: the `qwen2.5-coder:14b` code model (~9 GB at Q4_K_M, comfortable on a 16 GB GPU) plus the `bge-m3` embedder and `bge-reranker-v2-m3` reranker on a capable workstation, a few seconds to rebuild a small index, plain files for everything else. No cloud spend, no per-query API cost.
 
 ---
 
 ## 12. Glossary (for non-technical readers)
 
-- **LLM (Large Language Model):** the AI that generates text/SQL (here, `qwen2.5-coder:7b`).
+- **LLM (Large Language Model):** the AI that generates text/SQL (here, `qwen2.5-coder:14b`).
 - **Hallucination:** when an AI confidently produces plausible-sounding but factually wrong output — e.g., inventing a table name.
 - **RAG (Retrieval-Augmented Generation):** giving the AI the relevant reference documents *before* it answers, so it grounds its response in real facts instead of guessing.
 - **Embedding:** a numeric representation of a piece of text's meaning, used to find semantically similar text.

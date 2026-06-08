@@ -20,5 +20,13 @@
 card_txn_id
 
 ## Foreign keys / relationships
+
+**Outbound (card_transactions → other tables):**
 - `card_account_id` → `card_accounts.card_account_id`
 - `channel_cd` → `ref_channel_codes.channel_cd`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Channel name for each purchase (cross-subject): `card_transactions` → `ref_channel_codes` (channel_name, is_digital — e.g. CARD_PRESENT vs. CARD_NOT_PRESENT).
+- Cardholder: `card_transactions` → `card_accounts` → `members`.

@@ -6,5 +6,10 @@ chromadb>=0.5.0
 openai>=1.0.0
 pyyaml>=6.0
 pyodbc>=5.0
+# Hybrid retrieval (Section 4.4): BM25 sparse retrieval + cross-encoder reranking.
+rank-bm25>=0.2
+# sentence-transformers loads the bge-reranker-v2-m3 cross-encoder. Pulls torch; runs
+# on the GPU. If omitted, retrieval gracefully degrades to dense-only (see sql_assistant).
+sentence-transformers>=3.0
 pytest>=8.0
 pytest-mock>=3.0

@@ -19,9 +19,18 @@
 status_id
 
 ## Foreign keys / relationships
+
+**Outbound (loan_status_history → other tables):**
 - `loan_id` → `loans.loan_id`
 - `status_cd` → `ref_status_codes.status_cd` (filter entity_type = 'LOAN')
 - `recorded_by` → `staff.staff_id`
+
+**Referenced by:** *(none)*
+
+**Common join paths:**
+- Current delinquency status for a loan: `loans` → `loan_status_history` (WHERE end_date IS NULL — exactly one current row per loan; gives status_cd and days_past_due).
+- Member-level delinquency (cross-subject): `members` → `loans` → `loan_status_history`.
+- Who recorded a status change, and at which branch: `loan_status_history` → `staff` (recorded_by) → `branches`.
 
 ## Naming conventions
 - Current status: WHERE end_date IS NULL. There should be exactly one current row per loan.

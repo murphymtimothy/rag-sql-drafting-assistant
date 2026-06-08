@@ -17,4 +17,12 @@
 loan_type_cd
 
 ## Foreign keys / relationships
-*(none — reference/lookup table)*
+
+**Outbound:** *(none — reference/lookup table)*
+
+**Referenced by (other tables → loan_types.loan_type_cd):**
+- `loan_applications.loan_type_cd`
+- `loans.loan_type_cd`
+
+**Common join paths:**
+- Resolve a loan's or application's product name and terms: `loans` → `loan_types` or `loan_applications` → `loan_types`.
