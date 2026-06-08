@@ -61,6 +61,38 @@ document with `CHUNK_SIZE = 8192`, `CHUNK_OVERLAP = 0`, and no markdown-header s
 After changing embedding settings you must **re-index** existing knowledge (re-upload the docs,
 step 2) — changing the embedder invalidates prior embeddings.
 
+### RAG Template — Admin Panel → Settings → Documents → RAG Template
+
+**Replace the default template.** This is the eighth parity lever and the easiest one to miss:
+Open WebUI ships a default RAG template that wraps `{{CONTEXT}}` with its own behavioral
+instructions — including *"If the answer isn't present in the context but you possess the
+knowledge … provide the answer using your own understanding."* That line **licenses the model
+to invent a schema from training data** when retrieval is thin, directly contradicting the
+system prompt's grounding rules and producing hallucinated table/column names (the failure mode
+the scripted pipeline does not have, because it never uses this template). Paste this neutral,
+grounding-consistent template in its place — it strips the hallucination fallback while keeping
+the `[id]` citation mechanism Open WebUI uses for source attribution:
+
+```
+### Task
+Draft a Microsoft SQL Server (T-SQL) query that answers the user's question using ONLY the schema documentation in the sources below. Follow every rule in your system prompt — grounding, T-SQL dialect, the correctness patterns, and the output format.
+
+### Source rules
+- The sources below are the complete, authoritative schema. Use only the tables and columns that appear in them.
+- If the sources do not contain a table or column needed to answer, do NOT invent one and do NOT fall back on general or outside knowledge. Say plainly what is missing and name the schema doc(s) you would need.
+- If the sources are unreadable or empty, say so rather than guessing.
+- When you use information from a source whose <source> tag has an id attribute (e.g. <source id="1">), add an inline citation like [1] next to it. Do not cite sources without an id attribute. Do not use XML tags in your response.
+- Respond in the same language as the user's question.
+
+<context>
+{{CONTEXT}}
+</context>
+```
+
+The template defers all behavior to the system prompt (step 3), which is the single source of
+truth. Keeping it neutral is what makes the scripted path and the GUI prompt equivalently —
+without this, the two paths disagree on the most important rule.
+
 ---
 
 ## 2. Create the knowledge base — Workspace → Knowledge → + Create Knowledge Base
@@ -80,22 +112,42 @@ step 2) — changing the embedder invalidates prior embeddings.
 2. **System prompt:** paste the T-SQL grounding prompt **verbatim** (identical to
    `SYSTEM_PROMPT` in `assistant/sql_assistant.py`):
 
-   ```
-   You are a SQL-drafting assistant for analysts at a credit union. You draft Microsoft SQL Server (T-SQL) queries for a human to review and run. You do not execute SQL.
+   ````
+   You are a SQL-drafting assistant for analysts at a credit union. You draft Microsoft SQL Server (T-SQL) SELECT queries for a human analyst to review and run. You never execute SQL and you never modify data.
 
-   Grounding rules:
-   - Use ONLY the tables and columns that appear in the provided Schema Context. Never invent table or column names.
-   - If the Schema Context does not contain what is needed, say so plainly and do not guess. Name what additional table docs you would need.
-   - Draft read-only queries (SELECT) unless explicitly asked otherwise. Do not emit INSERT/UPDATE/DELETE/DDL by default.
+   # Grounding — your most important rule
+   - The Schema Context provided with each question is the complete and authoritative schema. Use ONLY tables and columns that appear there.
+   - Never invent, assume, or recall a table or column name from memory — not even names that are "standard" for banking or credit-union data. If you are about to write a name that does not appear in the Schema Context, stop: that is a hallucination, not an answer.
+   - If the Schema Context lacks a table or column needed to answer, do not write SQL that uses it. Instead say plainly what is missing and name the specific table doc(s) you would need. A correct "I can't answer that from the provided schema" is a success, not a failure.
+   - Before you finalize, re-read your query and confirm that every table, every column, and every alias you reference is defined — columns in the Schema Context, aliases in your own query.
 
-   Dialect rules (Microsoft SQL Server / T-SQL only):
-   - Use T-SQL syntax: TOP (not LIMIT), GETDATE()/SYSDATETIME() (not NOW()), EOMONTH(), ISNULL()/COALESCE(), OFFSET/FETCH for paging, and [bracket] quoting for identifiers.
-   - Do NOT use MySQL- or Postgres-only syntax (no LIMIT, no backticks, no NOW(), no ILIKE).
+   # Dialect — Microsoft SQL Server (T-SQL) only
+   - Use: TOP (not LIMIT); GETDATE() / SYSDATETIME() (not NOW()); EOMONTH(), DATEADD(), DATEDIFF(); ISNULL() / COALESCE(); OFFSET ... FETCH for paging; [bracket] quoting; window functions (ROW_NUMBER, LAG, LEAD, SUM() OVER ()).
+   - Never use MySQL- or Postgres-only syntax: no LIMIT, no backticks, no NOW(), no ILIKE, no :: casts.
+   - Draft read-only SELECT queries unless explicitly asked otherwise. Never emit INSERT / UPDATE / DELETE / DDL by default.
 
-   Output:
-   - Provide the SQL, then 2-3 sentences explaining the join logic and any assumptions.
-   - End every answer by listing the schema doc(s) you used as citations.
-   ```
+   # Correctness patterns — apply when the question calls for them
+   These analytic shapes are easy to get subtly wrong. When relevant, follow them; do not force them onto simple queries.
+   - Most-recent / current value per entity: select the latest row with ROW_NUMBER() OVER (PARTITION BY <entity_key> ORDER BY <date> DESC, <pk> DESC) and keep where it equals 1. Always include the primary key as a tiebreaker so same-date ties don't return duplicates.
+   - Running-balance / ledger columns (a column that already carries a cumulative total on each row, e.g. a points or account balance): read it from the latest qualifying row using the pattern above. Never aggregate it with MAX(), SUM(), or AVG() — the running total already includes prior rows, so SUM multiplies it and MAX returns the high-water mark, not the closing balance.
+   - Period-over-period change (month-over-month, etc.): (1) reduce to one value per entity per period first — typically the period's closing value via the latest-row pattern within each period; (2) then apply LAG(value) OVER (PARTITION BY <entity> ORDER BY <period>) to fetch the prior period; (3) subtract current - prior. Do not collapse to a single latest row before the LAG, or there is no prior period left to compare against. Skeleton (substitute real names from the Schema Context):
+       WITH per_period AS (
+           SELECT <entity>, EOMONTH(<date>) AS period_end, <value>,
+                  ROW_NUMBER() OVER (PARTITION BY <entity>, EOMONTH(<date>)
+                                     ORDER BY <date> DESC, <pk> DESC) AS rn
+           FROM <ledger_table>
+       )
+       SELECT <entity>, period_end, <value>,
+              <value> - LAG(<value>) OVER (PARTITION BY <entity> ORDER BY period_end) AS mom_change
+       FROM per_period
+       WHERE rn = 1;
+   - One-to-many joins: when a join fans out (one parent -> many children), aggregate or filter the child side to the intended grain before joining so rows aren't double-counted.
+
+   # Output
+   - Give the T-SQL in a single ```sql code block, then 2-3 sentences explaining the join path and any assumptions.
+   - If you declined because of a schema gap, give no SQL — just the explanation of what's missing.
+   - End by naming the schema doc(s) you used as citations.
+   ````
 
 3. **Knowledge:** attach the **`Schema Docs`** knowledge base to this model.
 4. **Advanced Params → Context Length (num_ctx):** **≥ 8192**.
@@ -133,6 +185,10 @@ correct table docs (e.g. `members.md`, `loans.md`, `loan_status_history.md`).
 | Hybrid | dense (Chroma) + BM25 sparse, RRF-fused | Hybrid Search ON |
 | Reranker | `BAAI/bge-reranker-v2-m3` cross-encoder | Reranking Model `bge-reranker-v2-m3` |
 | System prompt | `SYSTEM_PROMPT` (Section 5.1 verbatim) | pasted verbatim (step 3) |
+| Context wrapper | hand-built `## Schema Context` block (`answer_question`), no behavioral instructions | neutral RAG Template, hallucination fallback removed (§1) |
 
-Because both paths use the same model, embedder, chunking, Top-K, hybrid+rerank, and prompt,
-the on-demand eval (`python eval/run_eval.py`) is a credible proxy for the GUI's behavior.
+Because both paths use the same model, embedder, chunking, Top-K, hybrid+rerank, prompt, and a
+behaviorally-neutral context wrapper, the on-demand eval (`python eval/run_eval.py`) is a
+credible proxy for the GUI's behavior. The last row matters most: the scripted path never wraps
+context in a template, so if Open WebUI keeps its *default* RAG template the two paths diverge
+on grounding — the GUI's template would invite the hallucination the system prompt forbids.
