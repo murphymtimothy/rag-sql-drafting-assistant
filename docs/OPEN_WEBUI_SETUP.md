@@ -104,6 +104,17 @@ without this, the two paths disagree on the most important rule.
    embeddings stay current. The scripted side has `refresh/refresh_scheduler.py` for this; in
    Open WebUI it is a manual re-upload.
 
+> **Retrieval mode must be Focused Retrieval, not Full Context.** A knowledge base attached to a
+> model can run in two modes: **Focused Retrieval (RAG)** — Top-K + hybrid search + reranker,
+> injecting only the ~5 relevant chunks — or **Full Context**, which injects *every* document
+> verbatim and **silently ignores Top-K, Hybrid Search, and the reranker entirely**. With 20
+> table docs, Full Context dumps all 20 (~9–10K tokens), overruns the context window, and the
+> model truncates to a word or two before stopping. **Toggle the mode by clicking the attached
+> `Schema Docs` chip in the chat** (or on the knowledge item in the model editor) and make sure
+> it reads **Focused Retrieval**. A correct query for this collection should cite ~5 sources, not
+> 20. This single setting overrides every retrieval lever in §1 — get it wrong and none of them
+> apply.
+
 ---
 
 ## 3. Create the model — Workspace → Models → + Add Model
@@ -150,7 +161,12 @@ without this, the two paths disagree on the most important rule.
    ````
 
 3. **Knowledge:** attach the **`Schema Docs`** knowledge base to this model.
-4. **Advanced Params → Context Length (num_ctx):** **≥ 8192**.
+4. **Advanced Params → Context Length (num_ctx):** **≥ 8192**. This is **per-model** and
+   **not inherited** — Open WebUI / Ollama default many local models to **2048 tokens**, which is
+   smaller than this assistant's system prompt + 5 retrieved table docs. If `num_ctx` is left at
+   the default, the input alone overruns the window and the model emits **one or two words then
+   stops** (the truncation looks like a broken answer, not an error). Set it explicitly here and
+   re-check it after any model edit.
 5. Save.
 
 **Thinking/reasoning toggle.** `qwen2.5-coder` is a non-thinking coder model, so the
@@ -192,3 +208,26 @@ behaviorally-neutral context wrapper, the on-demand eval (`python eval/run_eval.
 credible proxy for the GUI's behavior. The last row matters most: the scripted path never wraps
 context in a template, so if Open WebUI keeps its *default* RAG template the two paths diverge
 on grounding — the GUI's template would invite the hallucination the system prompt forbids.
+
+---
+
+## 6. Troubleshooting — when the GUI misbehaves but the scripted path is fine
+
+These are Open WebUI-specific foot-guns. None of them show as errors — they silently degrade the
+answer, so they're easy to lose hours to. The scripted pipeline (`assistant/sql_assistant.py`)
+is unaffected by all of them; if the script grounds correctly and the GUI doesn't, the cause is
+almost always one of these.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Answer is **one or two words then stops** (e.g. just `To`) | Context window overflow. Either `num_ctx` is at the 2048 default (§3 step 4), or the knowledge base is in **Full Context mode** dumping all docs (next row). | Set `num_ctx` ≥ 8192; switch to Focused Retrieval. |
+| Response cites **~20 sources** (all tables) instead of ~5 | Knowledge base is in **Full Context mode** — it injects every doc verbatim and **ignores Top-K, Hybrid Search, and the reranker**. | Click the attached `Schema Docs` chip → set **Focused Retrieval** (§2). |
+| SQL uses **invented table/column names** (e.g. `Members`, `CreditCardAccounts`) | The **default RAG Template** licenses answering from model knowledge when context is thin. | Replace it with the neutral template in §1. |
+| Per-model settings (num_ctx, etc.) **don't take effect** | A global **`Function Calling: native`** setting (Admin Panel → Settings → Models → ⚙️ → Model Parameters) silently overrides per-model Advanced Params. | Set Function Calling to **Default**, or override it explicitly in the model's Advanced Params. |
+| Retrieval **returns nothing / wrong docs** after changing the embedder | Changing the **Embedding Model** invalidates all prior embeddings; retrieval fails silently against the old vectors. | Re-upload / reindex the `Schema Docs` knowledge base (§2 step 3). |
+| Grounding **degrades over a long multi-turn chat** | RAG context injected into the *user* message shifts position each turn, invalidating the KV cache and re-processing. | Optional: set env `RAG_SYSTEM_CONTEXT=True` to pin context to the system message; or start a fresh chat. |
+
+**Fast triage:** if the GUI looks wrong, first run the same question through the scripted path
+(`python -c "from assistant.sql_assistant import answer_question; print(answer_question('<q>')['sql'])"`).
+If the script is correct, the bug is GUI config — walk this table. If the script is *also* wrong,
+it's a prompt/retrieval issue in the shared core, and the eval harness is the place to debug it.
