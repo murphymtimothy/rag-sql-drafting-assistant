@@ -13,6 +13,35 @@ from scratch and get the **same grounded T-SQL behavior** the scripted pipeline 
 
 ---
 
+## A. Recommended: connect Open WebUI to the local SQL-assistant API
+
+This routes the GUI through the exact same pipeline as the scripted path (retrieval +
+system prompt + the deterministic `validate_sql` gate). It supersedes the manual RAG /
+system-prompt configuration in sections 1–3 below for this model.
+
+1. **Run the API on the host** (next to Ollama):
+   ```powershell
+   $env:SQL_API_TOKEN = "<choose-a-strong-token>"
+   python -m serve   # listens on 0.0.0.0:8000
+   ```
+2. **Add an OpenAI connection** in Open WebUI: Admin Panel → Settings → Connections →
+   OpenAI API → **Base URL** `http://host.docker.internal:8000/v1`, **API key** =
+   the same `SQL_API_TOKEN`. The model `cu-sql-assistant` then appears in the dropdown.
+3. **Set a separate Task Model (required).** Open WebUI uses the selected model for
+   title/tag/search-query/autocomplete generation. If it uses `cu-sql-assistant`, those
+   housekeeping prompts run through the SQL pipeline (wasted GPU, nonsense titles). Under
+   Admin Panel → Settings → Interface, set the **Task Model** to a plain Ollama model
+   (e.g. `qwen2.5-coder:14b`) and turn **Autocomplete Generation OFF**. (The API also
+   best-effort short-circuits these prompts, but the Task Model setting is the real fix.)
+4. Chat with `cu-sql-assistant`. No knowledge base, RAG template, or system prompt needs
+   to be configured in the UI — the API owns all of it.
+
+> Sections 1–3 (manual RAG template, knowledge base, pasted system prompt) remain as a
+> **legacy** fallback for running directly against an Ollama base model without the API.
+> Prefer section A — it cannot drift from the scripted path.
+
+---
+
 ## 0. Prerequisites
 
 - Ollama running locally with the models pulled:
