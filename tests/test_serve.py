@@ -99,3 +99,57 @@ def test_auth_accepts_correct_token(monkeypatch):
     monkeypatch.setenv("SQL_API_TOKEN", "right")
     from serve.auth import require_auth
     assert require_auth(authorization="Bearer right") is None
+
+
+def test_chat_completion_returns_validation_verdict(monkeypatch):
+    client = _client(monkeypatch)
+    fake = {"explanation": "Here is the query.",
+            "validation": {"ok": False, "errors": ["Unknown column: member_id"], "warnings": []}}
+    with patch("serve.app.answer_question", return_value=fake) as m:
+        resp = client.post("/v1/chat/completions", headers=AUTH, json={
+            "model": "cu-sql-assistant",
+            "messages": [{"role": "user", "content": "member growth"}],
+        })
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "Unknown column: member_id" in content and "validation flagged" in content
+    assert m.call_args.args[0] == "member growth"
+
+
+def test_chat_completion_maps_history(monkeypatch):
+    client = _client(monkeypatch)
+    with patch("serve.app.answer_question", return_value={"explanation": "ok", "validation": {"ok": True, "errors": []}}) as m:
+        client.post("/v1/chat/completions", headers=AUTH, json={
+            "messages": [
+                {"role": "user", "content": "show active members"},
+                {"role": "assistant", "content": "```sql\nSELECT 1\n```"},
+                {"role": "user", "content": "add their branch"},
+            ],
+        })
+    assert m.call_args.args[0] == "add their branch"
+    assert m.call_args.kwargs["history"][0]["content"] == "show active members"
+
+
+def test_chat_completion_unknown_model_404(monkeypatch):
+    client = _client(monkeypatch)
+    resp = client.post("/v1/chat/completions", headers=AUTH, json={
+        "model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 404
+
+
+def test_chat_completion_task_prompt_short_circuits(monkeypatch):
+    client = _client(monkeypatch)
+    with patch("serve.app.answer_question") as m:
+        resp = client.post("/v1/chat/completions", headers=AUTH, json={
+            "messages": [{"role": "user", "content": "### Task:\nCreate a concise, 3-5 word title"}]})
+    assert resp.status_code == 200
+    m.assert_not_called()
+
+
+def test_chat_completion_index_missing_is_friendly(monkeypatch):
+    client = _client(monkeypatch)
+    with patch("serve.app.answer_question", side_effect=RuntimeError("Chroma ... run build_index.py")):
+        resp = client.post("/v1/chat/completions", headers=AUTH, json={
+            "messages": [{"role": "user", "content": "members"}]})
+    assert resp.status_code == 200
+    assert "index isn't built" in resp.json()["choices"][0]["message"]["content"]
