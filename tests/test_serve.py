@@ -153,3 +153,16 @@ def test_chat_completion_index_missing_is_friendly(monkeypatch):
             "messages": [{"role": "user", "content": "members"}]})
     assert resp.status_code == 200
     assert "index isn't built" in resp.json()["choices"][0]["message"]["content"]
+
+
+def test_chat_completion_streaming_emits_sse(monkeypatch):
+    client = _client(monkeypatch)
+    fake = {"explanation": "SELECT done", "validation": {"ok": True, "errors": []}}
+    with patch("serve.app.answer_question", return_value=fake):
+        resp = client.post("/v1/chat/completions", headers=AUTH, json={
+            "messages": [{"role": "user", "content": "members"}], "stream": True})
+    assert resp.status_code == 200
+    body = resp.text
+    assert '"role": "assistant"' in body
+    assert "SELECT done" in body
+    assert "data: [DONE]" in body
