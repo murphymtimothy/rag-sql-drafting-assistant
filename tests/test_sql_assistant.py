@@ -221,6 +221,43 @@ def test_answer_question_decline_skips_validation(tmp_path):
     assert result["validation"] == {"ok": True, "errors": [], "warnings": []}
 
 
+def test_retrieval_query_combines_recent_user_messages():
+    from assistant.sql_assistant import _retrieval_query
+    history = [
+        {"role": "user", "content": "show active members"},
+        {"role": "assistant", "content": "```sql\nSELECT 1\n```"},
+    ]
+    q = _retrieval_query("now add their branch", history)
+    assert "show active members" in q and "now add their branch" in q
+
+
+def test_retrieval_query_without_history_is_just_the_question():
+    from assistant.sql_assistant import _retrieval_query
+    assert _retrieval_query("show members", None) == "show members"
+
+
+def test_answer_question_threads_history_into_messages(tmp_path):
+    mock_ollama = _make_mock_openai([0.1] * 768, "```sql\nSELECT member_id FROM members\n```")
+    history = [
+        {"role": "user", "content": "show active members"},
+        {"role": "assistant", "content": "```sql\nSELECT member_id FROM members\n```"},
+    ]
+    with patch("assistant.sql_assistant.ollama", mock_ollama):
+        answer_question("now add their branch", rag_enabled=False,
+                        chroma_path=tmp_path, history=history)
+    sent = mock_ollama.chat.completions.create.call_args.kwargs["messages"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
+    assert sent[-1]["content"].endswith("now add their branch")
+
+
+def test_answer_question_history_defaults_unchanged(tmp_path):
+    mock_ollama = _make_mock_openai([0.1] * 768, "```sql\nSELECT 1\n```")
+    with patch("assistant.sql_assistant.ollama", mock_ollama):
+        answer_question("q", rag_enabled=False, chroma_path=tmp_path)
+    sent = mock_ollama.chat.completions.create.call_args.kwargs["messages"]
+    assert [m["role"] for m in sent] == ["system", "user"]
+
+
 def test_log_result_appends_jsonl(tmp_path):
     result = {
         "timestamp": "2026-06-07T14:00:00Z",

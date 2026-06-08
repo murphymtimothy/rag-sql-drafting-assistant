@@ -38,6 +38,10 @@ DEFAULT_K = 5  # final retrieved chunks handed to the model (Top-K)
 K_DENSE = int(os.environ.get("RAG_K_DENSE", "20"))
 K_SPARSE = int(os.environ.get("RAG_K_SPARSE", "20"))
 
+# Multi-turn: cap threaded history (~3 turns) so prompt + schema context don't overflow
+# Ollama's context window (num_ctx), which has caused empty-output truncation before.
+HISTORY_MAX_MESSAGES = 6
+
 # REASONING_EFFORT is applied only when a gpt-oss reasoning model is selected (see the
 # guard in answer_question). gpt-oss spends its hidden reasoning channel before the final
 # answer; at default effort that overflows Ollama's 4096-token context window and
@@ -292,6 +296,27 @@ def _retrieve(
     return chunks, filenames, _dedupe(filenames)
 
 
+def _retrieval_query(question: str, history: list[dict] | None) -> str:
+    """Build the retrieval query. With multi-turn history, prepend the most recent prior
+    user message so schema context spans the evolving ask — a follow-up like 'now add
+    their branch' alone would drop the tables named in the previous turn."""
+    if not history:
+        return question
+    prior_user = [m["content"] for m in history if m.get("role") == "user" and m.get("content")]
+    return f"{prior_user[-1]}\n{question}" if prior_user else question
+
+
+def _trim_history(history: list[dict]) -> list[dict]:
+    """Keep only the most recent user/assistant turns (count-capped). System messages are
+    dropped — this service owns SYSTEM_PROMPT."""
+    turns = [
+        {"role": m["role"], "content": m["content"]}
+        for m in history
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    return turns[-HISTORY_MAX_MESSAGES:]
+
+
 def _extract_sql(content: str) -> str:
     """Extract the first SQL block from the model response."""
     match = re.search(r"```(?:sql)?\s*\n?(.*?)```", content, re.DOTALL | re.IGNORECASE)
@@ -307,6 +332,7 @@ def answer_question(
     k: int = DEFAULT_K,
     chroma_path: Path = CHROMA_PATH,
     schema_docs_path: Path = SCHEMA_DOCS,
+    history: list[dict] | None = None,
 ) -> dict:
     """
     Core assistant function. Returns a result dict with sql, explanation,
@@ -319,7 +345,7 @@ def answer_question(
 
     if rag_enabled:
         chunks, chunk_files, citations = _retrieve(
-            question, k, chroma_path, schema_docs_path
+            _retrieval_query(question, history), k, chroma_path, schema_docs_path
         )
 
     context_block = ""
@@ -331,10 +357,10 @@ def answer_question(
         context_block = "\n\n## Schema Context\n\n" + "\n\n---\n\n".join(parts)
 
     user_content = f"{context_block}\n\n## Question\n{question}".strip()
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if history:
+        messages.extend(_trim_history(history))
+    messages.append({"role": "user", "content": user_content})
 
     # reasoning_effort applies only to reasoning models (e.g. gpt-oss). Sending it to
     # non-reasoning models such as the Qwen coders is meaningless, so omit it for them.
