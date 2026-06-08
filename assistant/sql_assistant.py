@@ -14,7 +14,7 @@ SCHEMA_DOCS = ROOT / "schema_docs"
 LOGS_PATH = ROOT / "logs" / "queries.jsonl"
 COLLECTION = "schema_docs"
 
-DEFAULT_MODEL = "qwen2.5-coder:14b"  # non-thinking coder; see docs/model-selection.md
+DEFAULT_MODEL = "qwen2.5-coder:14b"  # non-thinking coder; see docs/EVAL_RESULTS.md
 # Embedding model. bge-m3 is the default (sparse+dense, pairs with hybrid search at
 # scale). nomic-embed-text is an acceptable fallback — override with RAG_EMBED_MODEL.
 EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL", "bge-m3")

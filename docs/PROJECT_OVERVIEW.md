@@ -22,7 +22,7 @@ General-purpose AI chatbots are tempting for this, but they have two disqualifyi
 
 This project demonstrates a solution that fixes both problems at once. We built a **SQL-drafting assistant that runs entirely on a local machine** (no internet, no cloud, no member data leaves the building) and that **grounds every answer in our actual schema documentation** using a technique called **Retrieval-Augmented Generation (RAG)**. Before the AI writes a single line of SQL, the system retrieves the relevant table documentation and hands it to the model as reference material. Every answer comes with **citations** — the exact schema documents it drew from — so a human can verify the grounding instead of trusting it.
 
-**The headline result:** on a curated test set of 15 representative questions (local model `qwen2.5-coder:7b`, averaged over 5 runs), the assistant scored **0.89 out of 1.0** for grounding accuracy *with* retrieval turned on, versus **0.30** with retrieval turned off. That gap is the entire point: the same model, same questions, the only difference being whether it could see our schema. Retrieval is what turns a plausible-sounding guess into a usable, schema-correct draft. (The local model was selected via a five-model evaluation — see §6 and [`docs/model-selection.md`](model-selection.md).)
+**The headline result:** on a curated test set of 15 representative questions (local model `qwen2.5-coder:7b`, averaged over 5 runs), the assistant scored **0.89 out of 1.0** for grounding accuracy *with* retrieval turned on, versus **0.30** with retrieval turned off. That gap is the entire point: the same model, same questions, the only difference being whether it could see our schema. Retrieval is what turns a plausible-sounding guess into a usable, schema-correct draft. (These numbers are from the `qwen2.5-coder:7b` bake-off winner; the shipped default is `qwen2.5-coder:14b`, statistically tied in that bake-off and adopted for on-prem headroom — a full re-run on the 14b is pending. The local model was selected via a five-model evaluation — see §6 and [`docs/EVAL_RESULTS.md`](EVAL_RESULTS.md).)
 
 This is a POC and a learning artifact, not a production system. It is deliberately narrow so it could be evaluated quickly and defended honestly. The rest of this document explains how it works, what we proved, what we deliberately left out, and what a production version would require.
 
@@ -227,7 +227,7 @@ Every `answer_question()` call appends one JSON record to `logs/queries.jsonl` (
 
 ## 6. Does it actually work? The evidence
 
-The assistant was evaluated across **five local models**, RAG-on vs. RAG-off, scored by the (now hardened — §5.4) grounding checker. Full methodology and the five-model table are in [`docs/model-selection.md`](model-selection.md). The headline from the bake-off (`qwen2.5-coder:7b`, which was statistically tied with the 14b now used as the operational default):
+The assistant was evaluated across **five local models**, RAG-on vs. RAG-off, scored by the (now hardened — §5.4) grounding checker. Full methodology and the five-model table are in [`docs/EVAL_RESULTS.md`](EVAL_RESULTS.md). The headline from the bake-off (`qwen2.5-coder:7b`, which was statistically tied with the 14b now used as the operational default — a full re-run on the shipped 14b is pending):
 
 | | Mean grounding score (qwen2.5-coder:7b) |
 |---|---|
@@ -258,7 +258,7 @@ We're stating these plainly because an honest POC is more useful than an oversol
 3. **Quality depends entirely on the docs.** RAG is only as good as the knowledge base. Thin or wrong schema documentation produces thin or wrong SQL. (The extraction script's TODO-placeholder behavior is the first line of defense here.)
 4. **Single-machine, single-user scale.** Performance and concurrency for many simultaneous users are unaddressed; this runs on one workstation via Ollama, not a served inference stack.
 5. **Small, hand-built test set.** 15 questions is enough to demonstrate the effect convincingly, not enough to be a statistically robust benchmark.
-6. **Model dependence.** Results are tied to the local model. The default is `qwen2.5-coder:14b` (statistically tied with the 7b in the five-model bake-off, [`docs/model-selection.md`](model-selection.md)); a different local model shifts the numbers — sometimes sharply, as the bake-off showed.
+6. **Model dependence.** Results are tied to the local model. The default is `qwen2.5-coder:14b` (statistically tied with the 7b in the five-model bake-off, [`docs/EVAL_RESULTS.md`](EVAL_RESULTS.md)); a different local model shifts the numbers — sometimes sharply, as the bake-off showed.
 
 ---
 
