@@ -166,3 +166,9 @@ def test_chat_completion_streaming_emits_sse(monkeypatch):
     assert '"role": "assistant"' in body
     assert "SELECT done" in body
     assert "data: [DONE]" in body
+
+
+def test_main_module_exposes_main(monkeypatch):
+    monkeypatch.setenv("SQL_API_TOKEN", "test-token")
+    import serve.__main__ as m
+    assert callable(m.main)
