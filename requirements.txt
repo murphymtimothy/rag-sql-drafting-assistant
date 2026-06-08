@@ -17,3 +17,7 @@ rank-bm25>=0.2
 sentence-transformers>=3.0
 pytest>=8.0
 pytest-mock>=3.0
+# Local OpenAI-compatible API (serve/) so Open WebUI uses the validated pipeline.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
