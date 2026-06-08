@@ -2,11 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Update (2026-06-08):** This is the original implementation plan. The default model was later changed from `gpt-oss:20b` to **`qwen2.5-coder:7b`** following a five-model evaluation (see [`docs/model-selection.md`](model-selection.md)), and the assistant added a Microsoft SQL Server (T-SQL) dialect instruction plus a `reasoning_effort` guard for reasoning-style models. Model names below were updated to match; embedded code listings are otherwise preserved as the historical plan.
+
 **Goal:** Build a fully local SQL-drafting assistant grounded via RAG over a mock credit-union warehouse schema, with automated grounding evaluation, structured logging, and a scheduled schema-refresh pipeline.
 
 **Architecture:** LlamaIndex + ChromaDB for ingestion (reuses proven §13 pattern); hand-rolled retrieval → prompt → generation → citation → logging for full transparency. Eval harness runs every question RAG-on vs. RAG-off and scores grounding automatically. Refresh scheduler hashes schema docs on a configurable interval and rebuilds the index only when changes are detected.
 
-**Tech Stack:** Python 3.11+, Ollama (`gpt-oss:20b` + `nomic-embed-text`), LlamaIndex 0.10+, ChromaDB, OpenAI Python SDK (pointed at Ollama), PyYAML, pyodbc, pytest
+**Tech Stack:** Python 3.11+, Ollama (`qwen2.5-coder:7b` + `nomic-embed-text`), LlamaIndex 0.10+, ChromaDB, OpenAI Python SDK (pointed at Ollama), PyYAML, pyodbc, pytest
 
 ---
 
@@ -52,7 +54,7 @@ poc-sql-assistant/
 def answer_question(
     question: str,
     rag_enabled: bool = True,
-    model: str = "gpt-oss:20b",
+    model: str = "qwen2.5-coder:7b",
     k: int = 5,
     chroma_path: Path = CHROMA_PATH,
 ) -> dict:
@@ -1403,7 +1405,7 @@ def test_log_result_appends_jsonl(tmp_path):
         "raw_chunks": ["chunk text here"],  # should be omitted from log
         "chunk_count": 1,
         "latency_ms": 100,
-        "model": "gpt-oss:20b",
+        "model": "qwen2.5-coder:7b",
         "eval_score": None,
         "eval_reason": None,
     }
@@ -1444,7 +1446,7 @@ from openai import OpenAI
 CHROMA_PATH = Path(__file__).parent.parent / "chroma_db"
 LOGS_PATH = Path(__file__).parent.parent / "logs" / "queries.jsonl"
 COLLECTION = "schema_docs"
-DEFAULT_MODEL = "gpt-oss:20b"
+DEFAULT_MODEL = "qwen2.5-coder:7b"
 DEFAULT_K = 5
 
 SYSTEM_PROMPT = (
@@ -2283,7 +2285,7 @@ git commit -m "feat: add SQL Server schema extraction script (read-only, pyodbc)
 
 ## Task 10: End-to-end validation, Windows Task Scheduler, and Open WebUI
 
-**Prerequisites:** Ollama running, `gpt-oss:20b` and `nomic-embed-text` pulled.
+**Prerequisites:** Ollama running, `qwen2.5-coder:7b` and `nomic-embed-text` pulled.
 
 - [ ] **Step 1: Run the full unit test suite — confirm no regressions**
 

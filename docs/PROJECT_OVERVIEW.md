@@ -6,7 +6,7 @@
 |---|---|
 | **Audience** | Leadership (technical and non-technical), data analysts, engineers |
 | **Status** | Working proof-of-concept (POC) — runs end-to-end on a single workstation |
-| **Date** | 2026-06-07 |
+| **Date** | 2026-06-08 |
 | **One-line summary** | A private, offline assistant that drafts accurate SQL for our data warehouse by *looking up* the real schema before it answers — and citing exactly which tables it used. |
 
 ---
@@ -22,7 +22,7 @@ General-purpose AI chatbots are tempting for this, but they have two disqualifyi
 
 This project demonstrates a solution that fixes both problems at once. We built a **SQL-drafting assistant that runs entirely on a local machine** (no internet, no cloud, no member data leaves the building) and that **grounds every answer in our actual schema documentation** using a technique called **Retrieval-Augmented Generation (RAG)**. Before the AI writes a single line of SQL, the system retrieves the relevant table documentation and hands it to the model as reference material. Every answer comes with **citations** — the exact schema documents it drew from — so a human can verify the grounding instead of trusting it.
 
-**The headline result:** on a curated test set of 15 representative questions, the assistant scored **0.83 out of 1.0** for grounding accuracy *with* retrieval turned on, versus **0.07** with retrieval turned off. That gap is the entire point: the same model, same questions, the only difference being whether it could see our schema. Retrieval is what turns a plausible-sounding guess into a usable, schema-correct draft.
+**The headline result:** on a curated test set of 15 representative questions (local model `qwen2.5-coder:7b`, averaged over 5 runs), the assistant scored **0.89 out of 1.0** for grounding accuracy *with* retrieval turned on, versus **0.30** with retrieval turned off. That gap is the entire point: the same model, same questions, the only difference being whether it could see our schema. Retrieval is what turns a plausible-sounding guess into a usable, schema-correct draft. (The local model was selected via a five-model evaluation — see §6 and [`docs/model-selection.md`](model-selection.md).)
 
 This is a POC and a learning artifact, not a production system. It is deliberately narrow so it could be evaluated quickly and defended honestly. The rest of this document explains how it works, what we proved, what we deliberately left out, and what a production version would require.
 
@@ -45,7 +45,7 @@ An analyst who doesn't already carry this map in their head has to go spelunking
 
 Large language models (LLMs) are extremely good at producing fluent, confident SQL. That's exactly the danger. Without knowledge of our specific schema, an LLM will **hallucinate** — it fills the gaps with names that are statistically plausible but factually wrong. For example, asked about delinquency it might write `SELECT * FROM member_delinquency_summary`, a table that does not exist. The output looks authoritative, wastes the analyst's time, and erodes trust in the tool.
 
-Our own measurements bear this out. With no schema context, the model scored essentially zero on grounding (0.07 across 15 questions). It wasn't writing *bad SQL* in the sense of broken syntax — it was writing *confident SQL about the wrong tables*.
+Our own measurements bear this out. With no schema context, grounding drops sharply — to **0.30** across 15 questions, and much of even that comes from the model correctly *declining* the impossible "trick" questions rather than from writing correct SQL. When it did write SQL without the schema, it wasn't producing *bad SQL* in the sense of broken syntax — it was producing *confident SQL about the wrong tables*.
 
 ### 2.3 The constraints that rule out the easy options
 
@@ -76,7 +76,7 @@ A small, self-contained system with six parts that work together:
               ▼
    ┌─────────────────────┐      ┌──────────────────────┐
    │   The assistant      │◀────▶│  Local LLM (Ollama)  │   Runs on the workstation.
-   │  answer_question()   │      │  gpt-oss:20b         │   Nothing leaves the machine.
+   │  answer_question()   │      │  qwen2.5-coder:7b    │   Nothing leaves the machine.
    └──────────┬──────────┘      └──────────────────────┘
               │ returns SQL + explanation + CITATIONS
               ▼
@@ -158,11 +158,11 @@ Key parameter choices:
 
 ### 5.3 The assistant core (`assistant/sql_assistant.py`)
 
-The central `answer_question(question, rag_enabled=True, model="gpt-oss:20b", k=5, ...)` function:
+The central `answer_question(question, rag_enabled=True, model="qwen2.5-coder:7b", k=5, ...)` function:
 
 1. **Retrieval (RAG-on only):** embeds the question, queries Chroma for the top-`k` (default 5) chunks, extracts chunk text and **de-duplicated** source filenames.
 2. **Prompt construction:** a system prompt that frames the assistant, forbids inventing names, and *requires* it to decline when the context is insufficient; a Schema Context block of the retrieved chunks (each tagged with its source); and the user's question.
-3. **Generation:** via the OpenAI-compatible client pointed at `localhost:11434/v1` (Ollama). The model is configurable.
+3. **Generation:** via the OpenAI-compatible client pointed at `localhost:11434/v1` (Ollama). The model is configurable; the default is the code-specialized `qwen2.5-coder:7b` (chosen via a five-model bake-off, §6). Reasoning-style models such as `gpt-oss` are detected and run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window — a non-reasoning coder model needs no such handling.
 4. **Citation + SQL extraction:** pulls the SQL out of the model's ```` ```sql ```` code block and attaches the citation list. **RAG-off deliberately produces an empty citation list** — that visible difference is itself a demonstrable output.
 5. **Returns one dictionary** with: `question`, `rag_enabled`, `sql`, `explanation`, `citations`, `raw_chunks` (full retrieved text, for transparency), `chunk_count`, `latency_ms`, `model`, `timestamp`, and `eval_score`/`eval_reason` (left null for interactive runs, filled in by the eval harness).
 
@@ -173,19 +173,20 @@ A simple interactive **CLI loop** wraps this for ad-hoc use; each interactive qu
 A lightweight, dependency-free scorer — no heavyweight SQL parser, which is overkill at this scale. It handles two question types:
 
 **Standard questions** (we know which tables the answer should touch):
-- Extract referenced table/column identifiers from the generated SQL with targeted regexes (`FROM`/`JOIN <table>`, `table.column` patterns), filtering out SQL keywords.
+- Extract referenced table/column identifiers from the generated SQL with targeted regexes (`FROM`/`JOIN <table>`, `table.column` patterns). It filters out SQL keywords, table aliases, CTE names, derived-table aliases, and schema qualifiers (e.g. `dbo.` / bracket-quoting) so valid SQL is never mis-flagged as referencing a non-existent table.
 - **Hallucination check:** does the SQL reference any table that doesn't exist in the schema? If yes → **score 0.0** (this is the failure mode that matters most).
 - **Coverage check:** does the SQL reference the tables we expected?
   - All expected tables present → **1.0**
   - Some present, some missing → **0.5**
   - None of the expected tables → **0.0**
+- **Prose fallback:** "which table…?" / "what columns…?" lookups are naturally answered in prose, not SQL. If no SQL is produced, expected tables named explicitly in the explanation are credited the same way.
 
 **Trick questions** (the schema genuinely *doesn't* contain what's asked — marked `expected_tables: []`):
 - If the model produced SQL anyway → **0.0** (it hallucinated a schema it doesn't have).
 - If it produced no SQL *and* explicitly acknowledged the gap ("the schema does not contain…") → **1.0**.
 - No SQL but no clear acknowledgment → **0.0**.
 
-The decline-detection uses a curated list of phrases ("cannot," "no such table," "schema does not," "I don't see," etc.) and normalizes smart quotes so matching is robust to typography. This is a known soft spot — see §7.
+The decline-detection uses a curated phrase list (broadened with real model phrasings such as "does not include," "no mention of," "I apologize") and normalizes smart quotes so matching is robust to typography. The checker was **hardened** after the multi-model evaluation revealed it was mis-scoring valid SQL — under-counting correct refusals and flagging schema-qualified names and CTE aliases as hallucinations (§6). It remains a directional signal, not a SQL validator — see §7.
 
 ### 5.5 The evaluation harness (`eval/run_eval.py`, `eval/test_questions.yaml`)
 
@@ -227,23 +228,23 @@ Every `answer_question()` call appends one JSON record to `logs/queries.jsonl` (
 
 ## 6. Does it actually work? The evidence
 
-The eval harness ran all 15 questions RAG-on vs. RAG-off against `gpt-oss:20b`. Results (`logs/eval_report.md`):
+The assistant was evaluated across **five local models**, RAG-on vs. RAG-off, scored by the (now hardened — §5.4) grounding checker. The default, **`qwen2.5-coder:7b`**, won on the balance of grounding accuracy, refusal safety, speed, and consistency. Full methodology and the five-model table are in [`docs/model-selection.md`](model-selection.md); the headline for the chosen model (`logs/eval_report.md`):
 
 | | Mean grounding score |
 |---|---|
-| **RAG enabled** | **0.83** |
-| No RAG (baseline) | 0.07 |
+| **RAG enabled** | **0.89** (5-run average; an individual run scored 0.97) |
+| No RAG (baseline) | 0.30 |
 
-**What this means in plain terms:** with the schema docs in front of it, the model wrote correctly-grounded SQL — referencing real tables and the right ones — on the large majority of questions. Without them, it was correct essentially never. The model and the questions were identical in both runs. **Retrieval is the entire difference.**
+**What this means in plain terms:** with the schema docs in front of it, the model wrote correctly-grounded SQL — referencing real tables, and the right ones — on essentially every question. Without them, grounding collapsed. The model and the questions were identical in both runs. **Retrieval is the entire difference.**
 
 Some specifics worth highlighting honestly:
 
-- **Cross-subject joins succeeded.** The three-table questions — e.g., "each member's active loans and delinquency status" (`members` + `loans` + `loan_status_history`) and "members with card accounts and their reward points" (`members` + `card_accounts` + `card_rewards`) — all scored **1.0** with RAG. These are the hard cases, and they're where RAG most clearly earned its keep.
-- **One partial (0.5):** the checking-balance question found `accounts` but not the `account_types` reference table — a "mostly right, one table short" result, scored accurately as partial.
-- **The trick questions are the most nuanced part of the story.** One trick (mortgage escrow) was handled perfectly: the model declined and acknowledged the gap (**1.0**). But two tricks (investment portfolio, credit-bureau pull) scored **0.0 under RAG** — *not because the model hallucinated tables*, but because it produced no SQL while phrasing its refusal in words our checker's phrase-list didn't recognize. In other words, **the model behaved well and the automated checker was too strict.** This is a checker limitation, not a model failure, and it means the real-world grounding quality is likely *better* than the 0.83 headline suggests.
-- **A quirk in the baseline:** the no-RAG run "passed" exactly one trick question by accident (with no schema to ground on, it had nothing to write), which is the entire source of its 0.07. That's the honest explanation for why the baseline isn't a clean zero.
+- **Cross-subject joins succeeded.** The three-table questions — e.g., "each member's active loans and delinquency status" (`members` + `loans` + `loan_status_history`) and "members with card accounts and their reward points" (`members` + `card_accounts` + `card_rewards`) — scored **1.0** with RAG. These are the hard cases, and they're where RAG most clearly earned its keep.
+- **All three trick questions are now scored correctly.** Asked for investment portfolios, mortgage escrow, or credit-bureau pulls — none of which exist — the model declined and acknowledged the gap, scoring **1.0** on each. (An earlier checker version mis-scored two of these as failures purely because their refusal wording wasn't in its phrase list; hardening the checker fixed that — §5.4.)
+- **Model choice matters as much as grounding.** The bake-off surfaced a sharp example: an older code-specialized model wrote excellent SQL on real questions yet *hallucinated* SQL for two-thirds of the impossible ones — exactly the dangerous failure RAG is meant to prevent. The chosen model declines reliably (perfect on the trick set) while matching the field's best on real queries.
+- **The no-RAG baseline (0.30) isn't a clean zero** — honestly so: without any schema the model still correctly *declines* the trick questions, earning most of those points, but on real questions it has nothing to ground on, which is the whole point.
 
-The system has been exercised for real: **32 query records** are logged in `logs/queries.jsonl` (15 questions × 2 modes from the eval run, plus interactive use), and the ChromaDB index is built and persisted on disk.
+The system has been exercised heavily: hundreds of query records are logged in `logs/queries.jsonl` across the model bake-off and eval runs, and the ChromaDB index is built and persisted on disk.
 
 ---
 
@@ -251,12 +252,12 @@ The system has been exercised for real: **32 query records** are logged in `logs
 
 We're stating these plainly because an honest POC is more useful than an oversold one.
 
-1. **The grounding checker is approximate.** It uses regexes and a phrase list, not a real SQL parser or semantic equivalence check. It can mark a correct-but-unusually-worded refusal as a failure (as happened on two trick questions), and it checks *table coverage* more rigorously than column-level correctness. It's a good directional signal, not a certification of correctness.
+1. **The grounding checker is approximate** — though hardened. It now strips schema qualifiers, ignores CTE and derived-table aliases, credits prose answers to lookup questions, and recognizes a much broader set of refusal phrasings (an earlier version mis-scored two correct refusals as failures). It is still regex- and phrase-list-based — not a real SQL parser, executor, or semantic-equivalence check — and it checks *table coverage* more rigorously than column-level correctness. It's a strong directional signal, not a certification of correctness.
 2. **It drafts; it does not validate.** The assistant produces SQL grounded in the schema, but it does not execute the query, check that it runs, or verify the results are semantically what the analyst wanted. **A human must review every draft.** This is by design — auto-execution is explicitly out of scope (§8).
 3. **Quality depends entirely on the docs.** RAG is only as good as the knowledge base. Thin or wrong schema documentation produces thin or wrong SQL. (The extraction script's TODO-placeholder behavior is the first line of defense here.)
 4. **Single-machine, single-user scale.** Performance and concurrency for many simultaneous users are unaddressed; this runs on one workstation via Ollama, not a served inference stack.
 5. **Small, hand-built test set.** 15 questions is enough to demonstrate the effect convincingly, not enough to be a statistically robust benchmark.
-6. **Model dependence.** Results are tied to `gpt-oss:20b` running locally. A different local model would shift the numbers.
+6. **Model dependence.** Results are tied to the local model. `qwen2.5-coder:7b` was chosen from a five-model bake-off ([`docs/model-selection.md`](model-selection.md)); a different local model shifts the numbers — sometimes sharply, as the bake-off showed.
 
 ---
 
@@ -290,7 +291,7 @@ This is the part leadership and risk should weigh most.
 pip install -r requirements.txt
 
 # Prerequisites: Ollama running locally, with models pulled:
-#   ollama pull gpt-oss:20b
+#   ollama pull qwen2.5-coder:7b
 #   ollama pull nomic-embed-text
 
 python ingest/build_index.py            # build the index from schema docs
@@ -320,13 +321,13 @@ If this graduates from proof-of-concept to a real internal tool, the natural pro
 3. **Harden the evaluation.** Expand the test set, and replace the regex checker with a proper SQL parser (and ideally a "does it actually execute against a schema?" check) for trustworthy quality metrics.
 4. **Add a friendly front-end.** A thin conversational GUI (e.g., Open WebUI wired to the same schema-doc knowledge base) over the *already-validated* core. The scripted path and eval harness remain the ground truth for correctness; the GUI is just how it's made pleasant to use.
 5. **Consider scale, if needed.** Multi-user serving would mean moving from Ollama to a served inference stack — only worth it if usage justifies it.
-6. **Operational footprint stays modest.** The whole stack is local and lightweight: a 20B-parameter model and a small embedding model on a capable workstation, a few seconds to rebuild a small index, plain files for everything else. No cloud spend, no per-query API cost.
+6. **Operational footprint stays modest.** The whole stack is local and lightweight: a 7B code-specialized model (~5 GB, comfortable on a 16 GB GPU) and a small embedding model on a capable workstation, a few seconds to rebuild a small index, plain files for everything else. No cloud spend, no per-query API cost.
 
 ---
 
 ## 12. Glossary (for non-technical readers)
 
-- **LLM (Large Language Model):** the AI that generates text/SQL (here, `gpt-oss:20b`).
+- **LLM (Large Language Model):** the AI that generates text/SQL (here, `qwen2.5-coder:7b`).
 - **Hallucination:** when an AI confidently produces plausible-sounding but factually wrong output — e.g., inventing a table name.
 - **RAG (Retrieval-Augmented Generation):** giving the AI the relevant reference documents *before* it answers, so it grounds its response in real facts instead of guessing.
 - **Embedding:** a numeric representation of a piece of text's meaning, used to find semantically similar text.
@@ -342,6 +343,6 @@ If this graduates from proof-of-concept to a real internal tool, the natural pro
 
 We set out to prove a specific, falsifiable claim: *that a fully local AI, grounded in our own schema documentation via retrieval, can draft accurate, verifiable SQL — without sending anything to the cloud and without baking sensitive data into a model.*
 
-The evidence supports it. With retrieval, the assistant grounded its answers correctly on the large majority of a representative test set (**0.83**), including the hardest cross-subject joins; without it, the same model was correct essentially never (**0.07**). Every answer is cited and every run is logged, so the grounding is verifiable rather than taken on faith. The path to a real warehouse is already built and is strictly read-only, metadata-only.
+The evidence supports it. With retrieval, the assistant grounded its answers correctly on essentially all of a representative test set (**0.89**, 5-run average), including the hardest cross-subject joins; without it, grounding collapsed (**0.30**, much of it from correct refusals). Every answer is cited and every run is logged, so the grounding is verifiable rather than taken on faith. The path to a real warehouse is already built and is strictly read-only, metadata-only.
 
 It is a proof-of-concept with honest limitations — it drafts rather than validates, its automated scorer is approximate, and it runs at single-analyst scale. But it demonstrates the core mechanism convincingly and safely, and it lays out a clear, low-risk path from here to a useful internal tool.

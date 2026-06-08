@@ -10,14 +10,14 @@ A local, fully offline SQL-drafting assistant grounded via RAG over a credit-uni
 
 **What we built.** A SQL-drafting assistant that runs **entirely on a local machine** (no internet, no cloud, no member data) and **grounds every answer in our actual schema documentation** using Retrieval-Augmented Generation (RAG). Before the AI writes any SQL, the system retrieves the relevant table docs and hands them to the model as reference. Every answer ships with **citations** — the exact schema docs it used — so a human can verify the grounding instead of trusting it.
 
-**Does it work?** On a curated test set of 15 representative questions, grounding accuracy was:
+**Does it work?** On a curated test set of 15 representative questions (local model `qwen2.5-coder:7b`, 5-run average), grounding accuracy was:
 
 | | Mean grounding score |
 |---|---|
-| **RAG enabled** | **0.83** |
-| No RAG (baseline) | 0.07 |
+| **RAG enabled** | **0.89** |
+| No RAG (baseline) | 0.30 |
 
-Same model, same questions — the only difference is whether it could see our schema. Retrieval is what turns a plausible guess into a usable, schema-correct draft. The hardest cases (cross-subject joins like "members → loans → delinquency status") scored a perfect 1.0 with RAG.
+Same model, same questions — the only difference is whether it could see our schema. Retrieval is what turns a plausible guess into a usable, schema-correct draft. The hardest cases (cross-subject joins like "members → loans → delinquency status") score a perfect 1.0 with RAG. The local model was chosen via a five-model bake-off — see [`docs/model-selection.md`](docs/model-selection.md).
 
 **Why it's safe.** Both the AI and the embedding model run locally via Ollama — nothing leaves the machine. The POC uses fictional mock data. The path to a real warehouse extracts **schema metadata only** (never row data) over **read-only** access to system catalog views. Every query is logged for audit. Schema knowledge lives in plain files we control, not baked into model weights — so it can be reviewed, corrected, and updated without retraining.
 
@@ -50,7 +50,7 @@ tests/              Unit + integration tests (pytest)
 
 - Python 3.11+
 - [Ollama](https://ollama.com) running locally
-- Models pulled: `ollama pull gpt-oss:20b && ollama pull nomic-embed-text`
+- Models pulled: `ollama pull qwen2.5-coder:7b && ollama pull nomic-embed-text`
 - (Optional) ODBC Driver 17 for SQL Server — only needed for the real-DB extraction script
 
 ## Quick start

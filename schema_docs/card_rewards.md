@@ -22,5 +22,5 @@ reward_id
 - `card_account_id` → `card_accounts.card_account_id`
 
 ## Naming conventions
-- To get the current points balance for a card: SELECT TOP 1 points_balance ORDER BY transaction_date DESC, reward_id DESC.
+- `points_balance` is a running ledger total carried on each row, not a per-event amount. To read the balance **as of any point in time** (e.g. current, or end-of-month), take the last row up to that cutoff ordered by `transaction_date DESC, reward_id DESC`. Never derive a balance with `MAX(points_balance)` or `SUM(points_balance)` — the running total already accounts for prior events, and MAX returns the high-water mark, not the closing balance.
 - Points are issued at 1 point per dollar of purchases (is_credit=0 card_transactions).

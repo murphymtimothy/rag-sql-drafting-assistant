@@ -127,3 +127,57 @@ def test_check_answer_trick_no_acknowledgment(minimal_schema_docs):
     out = check_answer(result, [], [], minimal_schema_docs)
     assert out["score"] == 0.0
     assert "acknowledgment" in out["reason"].lower()
+
+
+# --- hardening regressions: schema prefixes, CTE/derived aliases, prose, declines ---
+
+def test_extract_identifiers_ignores_schema_prefix():
+    # T-SQL schema qualification: dbo is a schema, not a table.
+    tables, _ = _extract_sql_identifiers("SELECT m.member_id FROM dbo.members AS m")
+    assert "members" in tables
+    assert "dbo" not in tables
+
+def test_extract_identifiers_ignores_bracket_quoting():
+    tables, _ = _extract_sql_identifiers("SELECT * FROM [dbo].[members]")
+    assert "members" in tables
+    assert "dbo" not in tables
+
+def test_extract_identifiers_ignores_cte_and_derived_alias():
+    sql = (
+        "WITH latest AS (SELECT card_account_id, MAX(transaction_date) d "
+        "FROM card_rewards GROUP BY card_account_id) "
+        "SELECT ca.card_account_id, latest.d "
+        "FROM card_accounts ca "
+        "JOIN (SELECT card_account_id FROM card_rewards) sub "
+        "  ON ca.card_account_id = sub.card_account_id "
+        "JOIN latest ON ca.card_account_id = latest.card_account_id"
+    )
+    tables, _ = _extract_sql_identifiers(sql)
+    assert "card_accounts" in tables
+    assert "card_rewards" in tables
+    assert "latest" not in tables   # CTE name, not a table
+    assert "sub" not in tables      # derived-table alias, not a table
+
+def test_check_answer_dbo_prefixed_not_hallucinated(minimal_schema_docs):
+    result = {"sql": "SELECT m.member_id FROM dbo.members AS m", "explanation": "x"}
+    out = check_answer(result, ["members"], [], minimal_schema_docs)
+    assert out["score"] == 1.0
+    assert "hallucinated" not in out["reason"].lower()
+
+def test_check_answer_prose_lookup_names_table(minimal_schema_docs):
+    # "Which table tracks X?" answered in prose with no SQL — should still get credit.
+    result = {"sql": "", "explanation": "You should use the members table for that."}
+    out = check_answer(result, ["members"], [], minimal_schema_docs)
+    assert out["score"] == 1.0
+
+def test_check_answer_trick_decline_phrasing_variant(minimal_schema_docs):
+    # Observed real decline wording that the original phrase list missed.
+    result = {
+        "sql": "",
+        "explanation": (
+            "I apologize, but the schema context provided does not include any "
+            "information about credit scores. There is no mention of such a table."
+        ),
+    }
+    out = check_answer(result, [], [], minimal_schema_docs)
+    assert out["score"] == 1.0

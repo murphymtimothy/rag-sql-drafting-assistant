@@ -20,6 +20,9 @@ _DECLINE_PHRASES = [
     "no such table", "not covered", "not supported by", "beyond the scope",
     "unfortunately", "not provided in", "not reflected in",
     "don't see", "do not see", "i don't see", "i do not see",
+    # additional observed model decline phrasings
+    "does not include", "does not contain", "no mention", "there is no",
+    "i apologize", "not include any", "no such", "isn't a table", "is not a table",
 ]
 
 
@@ -47,28 +50,54 @@ def _extract_sql_identifiers(sql: str) -> tuple[set[str], set[str]]:
 
     sql_lower = sql.lower()
     sql_clean = re.sub(r"'[^']*'", " ", sql_lower)
+    # Drop T-SQL bracket quoting so [dbo].[members] reads like dbo.members (remove the
+    # brackets without inserting whitespace, which would break the schema.table dot).
+    sql_clean = sql_clean.replace("[", "").replace("]", "")
 
     tables: set[str] = set()
     columns: set[str] = set()
     aliases: set[str] = set()
 
-    # FROM/JOIN <table> [AS] [alias] — capture both the table and any alias so the
-    # dotted-reference pass below can tell real tables apart from table aliases.
+    # Query-local names that are NOT schema tables but can appear on the left of a
+    # dotted reference: CTE names from WITH ... AS (...) and derived-table aliases
+    # written as ") alias". Collect them so they aren't mistaken for real tables.
+    aliases |= set(re.findall(r"(?:with|,)\s+(\w+)\s+as\s*\(", sql_clean))
+    for match in re.finditer(r"\)\s+(?:as\s+)?(\w+)", sql_clean):
+        if match.group(1) not in _SQL_NOISE:
+            aliases.add(match.group(1))
+
+    # Object-name schema qualifiers (e.g. dbo.members) — the qualifier is not a table.
+    schema_qualifiers = {"dbo", "sys", "information_schema", "guest"}
+
+    # FROM/JOIN [schema.]<table> [AS] [alias]. The optional "\w+\." swallows a schema
+    # qualifier; derived tables (FROM/JOIN "(") simply don't match and are skipped.
     for match in re.finditer(
-        r"(?:from|join)\s+(\w+)(?:\s+(?:as\s+)?(\w+))?", sql_clean
+        r"(?:from|join)\s+(?:\w+\.)?(\w+)(?:\s+(?:as\s+)?(\w+))?", sql_clean
     ):
         name, alias = match.group(1), match.group(2)
-        if name not in _SQL_NOISE and len(name) > 2:
+        # `name not in aliases` skips CTE names used as a table (e.g. JOIN <cte>),
+        # since CTE names were collected into `aliases` before this pass.
+        if (
+            name not in _SQL_NOISE
+            and name not in schema_qualifiers
+            and name not in aliases
+            and len(name) > 2
+        ):
             tables.add(name)
         if alias and alias not in _SQL_NOISE:
             aliases.add(alias)
 
-    # <ident>.<column> — the left side may be a table or a declared alias. Only
-    # treat it as a table when it is not a known alias; otherwise a multi-char
-    # alias (e.g. "lsh") would be mis-scored as a hallucinated table name.
+    # <ident>.<column> — the left side may be a table, a declared alias, a CTE name,
+    # or a schema qualifier. Only treat it as a table when it is none of those;
+    # otherwise an alias (e.g. "lsh") or CTE name would be mis-scored as a table.
     for match in re.finditer(r"(\w+)\.(\w+)", sql_clean):
         left, right = match.group(1), match.group(2)
-        if left not in _SQL_NOISE and left not in aliases and len(left) > 1:
+        if (
+            left not in _SQL_NOISE
+            and left not in aliases
+            and left not in schema_qualifiers
+            and len(left) > 1
+        ):
             tables.add(left)
         if right not in _SQL_NOISE and len(right) > 2:
             columns.add(right)
@@ -114,8 +143,27 @@ def check_answer(
             "reason": "No SQL but no explicit acknowledgment of schema gap",
         }
 
+    expected_set = {t.lower() for t in expected_tables}
+
     if not sql:
-        return {"score": 0.0, "reason": "No SQL generated"}
+        # No SQL — accept a prose answer that explicitly names the expected table(s).
+        # "Which table tracks X?" and "What columns does Y have?" are naturally
+        # answered in prose, so credit expected table names that appear as whole words.
+        named = {
+            t for t in expected_set
+            if re.search(rf"\b{re.escape(t)}\b", explanation)
+        }
+        if named == expected_set:
+            return {
+                "score": 1.0,
+                "reason": f"Prose answer names all expected tables: {', '.join(sorted(named))}",
+            }
+        if named:
+            return {
+                "score": 0.5,
+                "reason": f"Prose answer — found {sorted(named)}, missing {sorted(expected_set - named)}",
+            }
+        return {"score": 0.0, "reason": "No SQL generated and no expected table named in prose"}
 
     ref_tables, ref_columns = _extract_sql_identifiers(sql)
 
@@ -129,7 +177,6 @@ def check_answer(
             "reason": f"Hallucinated table names: {', '.join(sorted(hallucinated))}",
         }
 
-    expected_set = {t.lower() for t in expected_tables}
     matched = expected_set & ref_tables
 
     if matched == expected_set:

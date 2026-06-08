@@ -10,8 +10,16 @@ from openai import OpenAI
 CHROMA_PATH = Path(__file__).parent.parent / "chroma_db"
 LOGS_PATH = Path(__file__).parent.parent / "logs" / "queries.jsonl"
 COLLECTION = "schema_docs"
-DEFAULT_MODEL = "gpt-oss:20b"
+DEFAULT_MODEL = "qwen2.5-coder:7b"  # chosen via a 5-model eval; see docs/model-selection.md
 DEFAULT_K = 5
+# REASONING_EFFORT is applied only when a gpt-oss reasoning model is selected (see the
+# guard in answer_question). gpt-oss spends its hidden reasoning channel before the final
+# answer; at default effort that overflows Ollama's 4096-token context window and
+# `content` comes back empty (finish_reason=length). Raising num_ctx is not viable on a
+# 16GB GPU (the OpenAI-compatible endpoint ignores the option, and a native reload runs
+# out of VRAM), so we cap reasoning effort instead. The default qwen2.5-coder model is
+# not a reasoning model and is unaffected by this setting.
+REASONING_EFFORT = "low"
 
 SYSTEM_PROMPT = (
     "You are a SQL-drafting assistant for a credit union's internal data warehouse.\n"
@@ -19,6 +27,10 @@ SYSTEM_PROMPT = (
     "appear in that context — never invent table or column names.\n"
     "If the schema context does not contain what is needed to answer the question, "
     "say so explicitly rather than guessing.\n"
+    "Target database: Microsoft SQL Server. Write Transact-SQL (T-SQL) only — use "
+    "TOP and OFFSET ... FETCH for row limiting and date functions such as DATEADD, "
+    "DATEDIFF, DATEFROMPARTS, and DATETRUNC. Never use PostgreSQL/MySQL-only syntax "
+    "such as DATE_TRUNC(), LIMIT, or NOW().\n"
     "Always provide:\n"
     "1. The SQL query in a ```sql code block\n"
     "2. A brief explanation of the join logic and any assumptions you made."
@@ -116,7 +128,12 @@ def answer_question(
         {"role": "user", "content": user_content},
     ]
 
-    resp = ollama.chat.completions.create(model=model, messages=messages)
+    # reasoning_effort applies only to reasoning models (e.g. gpt-oss). Sending it to
+    # non-reasoning models such as the Qwen coders is meaningless, so omit it for them.
+    create_kwargs: dict = {"model": model, "messages": messages}
+    if "gpt-oss" in model:
+        create_kwargs["reasoning_effort"] = REASONING_EFFORT
+    resp = ollama.chat.completions.create(**create_kwargs)
     content = resp.choices[0].message.content
 
     return {

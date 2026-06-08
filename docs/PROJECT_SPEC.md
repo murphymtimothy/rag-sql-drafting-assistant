@@ -155,7 +155,7 @@ poc-sql-assistant/
    - **System prompt:** frames the assistant as a SQL-drafting assistant for the credit union warehouse; explicitly instructs it to reference only tables/columns in the provided schema context; explicitly instructs it to say so if it cannot answer from the context rather than guessing. That "say so" instruction is itself an eval target.
    - **Context block (RAG-on):** retrieved chunk texts, formatted with their source table names.
    - **User turn:** the question.
-3. **Generation:** via the OpenAI-compatible client (`localhost:11434/v1`), requesting SQL + a short explanation of join logic/assumptions. Model is configurable (defaults to `gpt-oss:20b`).
+3. **Generation:** via the OpenAI-compatible client (`localhost:11434/v1`), requesting SQL + a short explanation of join logic/assumptions. Model is configurable (defaults to `qwen2.5-coder:7b`, selected via a five-model bake-off — see `docs/model-selection.md`). The system prompt pins the target dialect to Microsoft SQL Server (T-SQL); reasoning-style models such as `gpt-oss` are run at low reasoning effort so their hidden reasoning channel doesn't exhaust the context window.
 4. **Citation extraction:** source table names and filenames from retrieved chunks, attached to the result. RAG-off produces an empty citation list — this difference is itself a visible, demonstrable output.
 5. **Return value:**
    ```python
@@ -240,7 +240,7 @@ Output: a markdown table (RAG-on score, RAG-off score, delta, citations) + summa
   "explanation": "...",
   "citations": ["loans.md", "members.md"],
   "latency_ms": 1840,
-  "model": "gpt-oss:20b",
+  "model": "qwen2.5-coder:7b",
   "eval_score": 1.0,
   "eval_reason": "All expected tables and columns present",
   "chunk_count": 5
@@ -286,7 +286,12 @@ Output: a markdown table (RAG-on score, RAG-off score, delta, citations) + summa
 
 ## Section 8: Open WebUI integration
 
-The same `schema_docs/` folder is wired into Open WebUI's "Knowledge" feature (Admin Panel → Settings → Documents → set embedding model to Ollama / `nomic-embed-text` → create a Knowledge Base → upload docs). This provides a conversational GUI layer for interactive use or demos.
+The same `schema_docs/` folder is wired into Open WebUI's "Knowledge" feature for a conversational GUI layer. To match the scripted pipeline's grounding quality:
+
+- **Admin Panel → Settings → Documents:** embedding engine **Ollama** / `nomic-embed-text`; **Token** text-splitter, chunk size **1024**, markdown-header splitting **off** (so each table doc stays whole); **Top K 5**; enable **hybrid search** + a reranking model (e.g. `BAAI/bge-reranker-v2-m3`). Then create a Knowledge Base and upload the docs. Re-upload + reindex whenever `schema_docs/` changes.
+- **Workspace → Models:** create a model on **`qwen2.5-coder:7b`**, paste the grounding system prompt (only reference tables/columns present in the context; decline when they're absent; **target Microsoft SQL Server / T-SQL**), attach the Knowledge Base, and set context length ≥ 8192.
+
+This provides a conversational GUI layer for interactive use or demos.
 
 This is explicitly a **thin presentation layer** on top of the already-validated core, not a parallel pipeline. The scripted path and eval harness are the ground truth for correctness; WebUI is how it's made pleasant to use. The guide makes this distinction explicit — a natural answer to "which version is the real one?"
 
