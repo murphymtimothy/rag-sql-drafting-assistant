@@ -77,3 +77,17 @@
   expected_tables: []
   expected_columns: []
   notes: "TRICK: No credit bureau pull table exists in this schema. Must decline."
+
+# Regression cases — froze the member gains/losses failure (model invented
+# loan_status_history.member_id + 'INACTIVE'/'TERMINATED' statuses and treated
+# loan-status history as member departures).
+
+- question: "Can you tell me our member gains and losses over the last year as well as the net growth?"
+  expected_tables: []
+  expected_columns: []
+  notes: "TRICK (partial-decline regression): gains ARE derivable from members.member_since_date, but losses and net-growth-over-time are NOT — the schema has no member-departure/end date (members has only member_since_date and a current status_cd). Correct behavior is to decline the losses/net-growth portion and NOT invent loan_status_history / a member_id on it / 'INACTIVE'/'TERMINATED' statuses. Empty expected_tables scores this on whether the model declines rather than hallucinating a losses source."
+
+- question: "How many members joined in the last year?"
+  expected_tables: [members]
+  expected_columns: [member_since_date]
+  notes: "Derivable half of the gains/losses ask — member gains (joins) come straight from members.member_since_date. Pairs with the trick case above to confirm gains succeed while losses/net-growth are declined."
