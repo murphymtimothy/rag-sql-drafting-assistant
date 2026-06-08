@@ -1,0 +1,36 @@
+# Offline unit test gate.
+#
+# Runs the OFFLINE pytest suite (pytest -m "not integration") on every pull
+# request and on pushes to main. The `integration` marker denotes tests that
+# need a live Ollama server, which GitHub-hosted runners do not have, so they
+# are excluded here.
+#
+# Scope note: this gate covers the offline unit suite only. The eval-SCORE
+# regression gate (running eval/run_eval.py) requires a self-hosted runner with
+# Ollama plus a built Chroma index and is a deliberate follow-up, NOT part of
+# this workflow.
+
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest pyyaml
+
+      - name: Run offline tests
+        run: pytest -m "not integration"
