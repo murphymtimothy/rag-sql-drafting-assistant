@@ -180,6 +180,47 @@ def test_answer_question_chroma_missing_raises_on_rag(tmp_path):
             )
 
 
+# --- answer_question validation wiring (§2d: the validate_sql gate) ---
+
+def test_answer_question_flags_hallucinated_column(tmp_path):
+    # loan_status_history has no member_id column (it carries loan_id). The validator
+    # must catch it, and answer_question must surface the verdict via result["validation"].
+    mock_ollama = _make_mock_openai(
+        [0.1] * 768,
+        "```sql\nSELECT member_id FROM loan_status_history\n```",
+    )
+    with patch("assistant.sql_assistant.ollama", mock_ollama):
+        result = answer_question("q", rag_enabled=False, chroma_path=tmp_path)
+
+    assert result["validation"]["ok"] is False
+    assert result["validation"]["errors"], "expected a binding error for the unknown column"
+
+
+def test_answer_question_validation_passes_for_clean_sql(tmp_path):
+    mock_ollama = _make_mock_openai(
+        [0.1] * 768,
+        "```sql\nSELECT member_id, first_name FROM members\n```",
+    )
+    with patch("assistant.sql_assistant.ollama", mock_ollama):
+        result = answer_question("q", rag_enabled=False, chroma_path=tmp_path)
+
+    assert result["validation"]["ok"] is True
+    assert result["validation"]["errors"] == []
+
+
+def test_answer_question_decline_skips_validation(tmp_path):
+    # A correct schema-gap decline produces no SQL, so validation has nothing to flag.
+    mock_ollama = _make_mock_openai(
+        [0.1] * 768,
+        "I cannot answer this from the provided schema — there is no such table.",
+    )
+    with patch("assistant.sql_assistant.ollama", mock_ollama):
+        result = answer_question("q", rag_enabled=False, chroma_path=tmp_path)
+
+    assert result["sql"] == ""
+    assert result["validation"] == {"ok": True, "errors": [], "warnings": []}
+
+
 def test_log_result_appends_jsonl(tmp_path):
     result = {
         "timestamp": "2026-06-07T14:00:00Z",

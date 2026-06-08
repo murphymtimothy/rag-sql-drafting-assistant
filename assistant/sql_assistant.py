@@ -8,6 +8,15 @@ from pathlib import Path
 import chromadb
 from openai import OpenAI
 
+# validate_sql is the deterministic offline gate (see assistant/validate.py). Dual
+# import so it works both as a package (pytest, eval, `python -m assistant.sql_assistant`)
+# and when the CLI is run as a bare script (`python assistant/sql_assistant.py`, see
+# README), where the package root is not on sys.path and only `assistant/` is.
+try:
+    from assistant.validate import validate_sql
+except ModuleNotFoundError:  # bare-script invocation
+    from validate import validate_sql
+
 ROOT = Path(__file__).parent.parent
 CHROMA_PATH = ROOT / "chroma_db"
 SCHEMA_DOCS = ROOT / "schema_docs"
@@ -334,13 +343,30 @@ def answer_question(
         create_kwargs["reasoning_effort"] = REASONING_EFFORT
     resp = ollama.chat.completions.create(**create_kwargs)
     content = resp.choices[0].message.content
+    sql = _extract_sql(content)
+
+    # Deterministic post-generation gate (offline, no DB). The SYSTEM_PROMPT asks the
+    # model not to hallucinate columns or slip dialects, but a prompt is only a request —
+    # this enforces it. We surface the verdict (via the "validation" field and _cli_loop)
+    # but never suppress the SQL: a human reviews and runs it. Validation only applies
+    # when SQL was produced — a correct schema-gap decline has no SQL to check. The gate
+    # must never break drafting, so a validator failure fails OPEN (degrades to a
+    # warning); the human still reviews the draft.
+    if sql.strip():
+        try:
+            validation = validate_sql(sql)
+        except Exception as exc:  # noqa: BLE001 — the gate must not crash the assistant
+            validation = {"ok": True, "errors": [], "warnings": [f"validator did not run: {exc}"]}
+    else:
+        validation = {"ok": True, "errors": [], "warnings": []}
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "question": question,
         "rag_enabled": rag_enabled,
-        "sql": _extract_sql(content),
+        "sql": sql,
         "explanation": content,
+        "validation": validation,
         "citations": citations,
         "raw_chunks": chunks,
         "chunk_count": len(chunks),
@@ -391,6 +417,18 @@ def _cli_loop(chroma_path: Path = CHROMA_PATH, model: str = DEFAULT_MODEL) -> No
         result = answer_question(question, rag_enabled=True, model=model, chroma_path=chroma_path)
         log_result(result)
         print(f"\n{result['explanation']}")
+        # Surface the validation verdict so the analyst sees hallucinated columns /
+        # dialect slips the model's self-check missed. ASCII markers only — the Windows
+        # console default encoding (cp1252) can't encode emoji and would raise on print.
+        validation = result.get("validation") or {}
+        if validation.get("errors"):
+            print("\n[!] Validation errors — review before running this SQL:")
+            for err in validation["errors"]:
+                print(f"    - {err}")
+        if validation.get("warnings"):
+            print("\n[i] Validation warnings:")
+            for warn in validation["warnings"]:
+                print(f"    - {warn}")
         if result["citations"]:
             print(f"\nSources: {', '.join(result['citations'])}")
         print(f"({result['latency_ms']}ms)\n")
