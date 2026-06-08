@@ -172,3 +172,30 @@ def test_main_module_exposes_main(monkeypatch):
     monkeypatch.setenv("SQL_API_TOKEN", "test-token")
     import serve.__main__ as m
     assert callable(m.main)
+
+
+def test_chat_completion_ollama_unreachable_is_friendly(monkeypatch):
+    import httpx
+    import openai
+    client = _client(monkeypatch)
+    err = openai.APIConnectionError(request=httpx.Request("POST", "http://localhost"))
+    with patch("serve.app.answer_question", side_effect=err):
+        resp = client.post("/v1/chat/completions", headers=AUTH, json={
+            "messages": [{"role": "user", "content": "members"}]})
+    assert resp.status_code == 200
+    assert "unreachable" in resp.json()["choices"][0]["message"]["content"].lower()
+
+
+def test_is_task_prompt_false_for_question_mentioning_concise():
+    from serve.conversation import is_task_prompt
+    assert is_task_prompt(_msgs(("user", "Write a query to generate a concise summary of member balances"))) is False
+
+
+def test_is_task_prompt_only_inspects_last_user_message():
+    from serve.conversation import is_task_prompt
+    # an OWUI task marker in an EARLIER turn must not poison a later real question
+    assert is_task_prompt(_msgs(
+        ("user", "### Task:\nCreate a concise, 3-5 word title"),
+        ("assistant", "Member Balances"),
+        ("user", "show me active members"),
+    )) is False

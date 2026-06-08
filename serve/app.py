@@ -1,8 +1,10 @@
 """FastAPI app exposing answer_question() as an OpenAI-compatible endpoint."""
 import json
+import logging
 import time
 import uuid
 
+import openai
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -37,6 +39,9 @@ def _format_content(result: dict) -> str:
 
 def _operational_error_message(exc: Exception) -> str:
     """Turn a pipeline error into a GUI-friendly assistant message (not a red HTTP error)."""
+    if isinstance(exc, openai.APIConnectionError):
+        return ("⚠️ The model backend (Ollama) is unreachable. "
+                "Make sure Ollama is running, then retry.")
     msg = str(exc)
     if "build_index" in msg:
         return ("⚠️ The schema index isn't built yet. Run "
@@ -49,7 +54,8 @@ def _generate_content(question: str, history: list[dict]) -> str:
     become a friendly message rather than a 500."""
     try:
         result = answer_question(question, rag_enabled=True, history=history)
-    except RuntimeError as exc:
+    except (RuntimeError, openai.OpenAIError) as exc:
+        logging.getLogger(__name__).error("pipeline error: %s", exc)
         return _operational_error_message(exc)
     return _format_content(result)
 

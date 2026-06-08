@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ingest*", "assistant*", "eval*", "refresh*", "extraction*"]
+include = ["ingest*", "assistant*", "eval*", "refresh*", "extraction*", "serve*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
