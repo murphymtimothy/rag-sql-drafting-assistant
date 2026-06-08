@@ -44,14 +44,21 @@ def test_extract_identifiers_excludes_multichar_aliases():
 # --- _load_schema_names ---
 
 def test_load_schema_names_returns_table_from_filename(minimal_schema_docs):
-    tables, columns = _load_schema_names(minimal_schema_docs)
+    tables, columns, column_tables = _load_schema_names(minimal_schema_docs)
     assert "members" in tables
     assert "loans" in tables
 
 def test_load_schema_names_returns_columns(minimal_schema_docs):
-    tables, columns = _load_schema_names(minimal_schema_docs)
+    tables, columns, column_tables = _load_schema_names(minimal_schema_docs)
     assert "member_id" in columns
     assert "first_name" in columns
+
+def test_load_schema_names_maps_column_to_tables(minimal_schema_docs):
+    # member_id is defined on BOTH members and loans; first_name only on members.
+    _, _, column_tables = _load_schema_names(minimal_schema_docs)
+    assert column_tables["member_id"] == {"members", "loans"}
+    assert column_tables["first_name"] == {"members"}
+    assert "credit_score" not in column_tables
 
 
 # --- check_answer: standard questions ---
@@ -72,6 +79,47 @@ def test_check_answer_partial_match(minimal_schema_docs):
     }
     out = check_answer(result, ["members", "loans"], ["member_id"], minimal_schema_docs)
     assert out["score"] == 0.5
+
+def test_check_answer_nonexistent_column_referenced_in_sql(minimal_schema_docs):
+    # SQL references a column (credit_score) that exists in NO schema table.
+    # The query's tables are valid, so the OLD table-only scoring returned 1.0;
+    # column-aware scoring must drop it below 1.0 and name the offending column.
+    result = {
+        "sql": "SELECT m.member_id, m.credit_score FROM members m",
+        "explanation": "Returns each member's credit score.",
+    }
+    out = check_answer(result, ["members"], ["member_id"], minimal_schema_docs)
+    assert out["score"] < 1.0
+    assert "credit_score" in out["reason"].lower()
+
+def test_check_answer_nonexistent_expected_column(minimal_schema_docs):
+    # The expected_columns list itself names a column absent from every table.
+    result = {
+        "sql": "SELECT m.member_id FROM members m",
+        "explanation": "Returns member ids.",
+    }
+    out = check_answer(result, ["members"], ["member_id", "credit_score"], minimal_schema_docs)
+    assert out["score"] < 1.0
+    assert "credit_score" in out["reason"].lower()
+
+def test_check_answer_all_columns_exist_scores_full(minimal_schema_docs):
+    # Correct query whose referenced columns all exist AND every expected_column is
+    # present in the schema — column-aware scoring must still award 1.0.
+    result = {
+        "sql": (
+            "SELECT m.member_id, m.first_name, l.loan_id, l.days_past_due "
+            "FROM members m JOIN loans l ON m.member_id = l.member_id"
+        ),
+        "explanation": "Joins members to loans, all real columns.",
+    }
+    out = check_answer(
+        result,
+        ["members", "loans"],
+        ["member_id", "first_name", "loan_id", "days_past_due"],
+        minimal_schema_docs,
+    )
+    assert out["score"] == 1.0
+    assert "credit_score" not in out["reason"].lower()
 
 def test_check_answer_multichar_alias_not_hallucinated(minimal_schema_docs):
     # Regression: correct query using multi-char aliases must score 1.0, not be
