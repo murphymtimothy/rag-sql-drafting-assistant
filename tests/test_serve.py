@@ -53,3 +53,18 @@ def test_is_task_prompt_detects_owui_title_generation():
 def test_is_task_prompt_false_for_normal_question():
     from serve.conversation import is_task_prompt
     assert is_task_prompt(_msgs(("user", "show me active members"))) is False
+
+
+def test_auth_rejects_wrong_token(monkeypatch):
+    monkeypatch.setenv("SQL_API_TOKEN", "right")
+    from fastapi import HTTPException
+    from serve.auth import require_auth
+    with pytest.raises(HTTPException) as ei:
+        require_auth(authorization="Bearer wrong")
+    assert ei.value.status_code == 401
+
+
+def test_auth_accepts_correct_token(monkeypatch):
+    monkeypatch.setenv("SQL_API_TOKEN", "right")
+    from serve.auth import require_auth
+    assert require_auth(authorization="Bearer right") is None
