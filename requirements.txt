@@ -6,6 +6,10 @@ chromadb>=0.5.0
 openai>=1.0.0
 pyyaml>=6.0
 pyodbc>=5.0
+# Deterministic offline SQL validation (assistant/validate.py): parse + column-bind
+# T-SQL drafts against the schema_docs catalog to catch hallucinated columns and
+# non-T-SQL dialect slips before they ship. Pure-Python, no DB/network.
+sqlglot>=25.0
 # Hybrid retrieval (Section 4.4): BM25 sparse retrieval + cross-encoder reranking.
 rank-bm25>=0.2
 # sentence-transformers loads the bge-reranker-v2-m3 cross-encoder. Pulls torch; runs
