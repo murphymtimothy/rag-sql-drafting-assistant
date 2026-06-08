@@ -1,4 +1,35 @@
 import pytest
+from unittest.mock import patch
+from fastapi.testclient import TestClient
+
+
+def _client(monkeypatch):
+    monkeypatch.setenv("SQL_API_TOKEN", "test-token")
+    from serve.app import create_app
+    return TestClient(create_app())
+
+
+AUTH = {"Authorization": "Bearer test-token"}
+
+
+def test_create_app_fails_closed_without_token(monkeypatch):
+    monkeypatch.delenv("SQL_API_TOKEN", raising=False)
+    from serve.app import create_app
+    with pytest.raises(RuntimeError, match="SQL_API_TOKEN"):
+        create_app()
+
+
+def test_health_is_open(monkeypatch):
+    resp = _client(monkeypatch).get("/health")
+    assert resp.status_code == 200 and resp.json()["status"] == "ok"
+
+
+def test_models_requires_auth(monkeypatch):
+    client = _client(monkeypatch)
+    assert client.get("/v1/models").status_code == 401
+    resp = client.get("/v1/models", headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["id"] == "cu-sql-assistant"
 
 
 def test_request_ignores_extra_fields_and_defaults_stream_false():
