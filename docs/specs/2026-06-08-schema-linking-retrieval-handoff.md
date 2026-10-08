@@ -23,7 +23,7 @@ The validator runs **after** generation — it cannot surface a table the **retr
 
 **Root cause:** top-K (=5) **doc-level** retrieval drops the needed table when the question's wording doesn't lexically/semantically match the table doc. "gains / losses / net growth" doesn't match `members.md` (which talks about `member_since_date`, `status_cd`), so the reranker ranked other docs above it and `members.md` fell outside the top-5. The model then safely declined — **better than the original hallucination, but still wrong**: gains *are* derivable from `members.member_since_date`; losses/net-growth are *not* (no member-departure date exists anywhere in the schema).
 
-At Redwood's hundreds of tables, this retrieval-coverage gap is the **dominant** failure mode.
+At production scale (hundreds of tables), this retrieval-coverage gap is the **dominant** failure mode.
 
 ## Goal
 
@@ -44,7 +44,7 @@ Reliably surface the tables/columns a question needs into the model's Schema Con
 4. **Two-stage schema linking (DIN-SQL/CHESS-style).** A cheap first pass (deterministic keyword match or a small LLM call) names the tables/columns the question needs; retrieve those precisely. More moving parts; revisit if 1–3 fall short.
 5. **Retrieval-query expansion.** Hypothetical-document or keyword expansion before embedding (e.g. expand "gains/losses/net growth" → "members joining and leaving, member_since_date, membership status").
 
-**Recommended starting bet:** #1 (FK-graph expansion) + #3 (inject join paths/enums) are the cheapest, most deterministic wins and directly fix today's repro. #2 is the deeper investment for Redwood scale. Decide in brainstorming.
+**Recommended starting bet:** #1 (FK-graph expansion) + #3 (inject join paths/enums) are the cheapest, most deterministic wins and directly fix today's repro. #2 is the deeper investment for production scale. Decide in brainstorming.
 
 **Constraints:** keep `num_ctx` from overflowing (prefer precise retrieval over a bigger K); on-prem/offline; the scripted path and the GUI both call `_retrieve`, so any change benefits both automatically (don't fork them).
 

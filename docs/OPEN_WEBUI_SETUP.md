@@ -8,7 +8,7 @@ from scratch and get the **same grounded T-SQL behavior** the scripted pipeline 
 
 > **Why this matters.** The Open WebUI retrieval settings below (chunking, Top-K, hybrid
 > search, reranker) are deliberately aligned to the scripted pipeline so the eval harness is a
-> faithful proxy for what the GUI does. At ~20 mock tables this barely matters; at Redwood's
+> faithful proxy for what the GUI does. At ~20 mock tables this barely matters; at production scale, with
 > hundreds of tables, retrieval tuning is the whole ballgame. See `docs/PORTING_TO_ONPREM.md`.
 
 ---

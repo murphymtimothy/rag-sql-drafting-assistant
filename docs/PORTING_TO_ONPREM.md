@@ -1,6 +1,6 @@
-# Porting home → Redwood (on-prem)
+# Porting home → on-prem
 
-This home build on a personal PC is a **rehearsal** for an on-prem proof-of-concept at Redwood
+This home build on a personal PC is a **rehearsal** for an on-prem proof-of-concept at the credit union
 Credit Union: on-prem, Microsoft SQL Server (T-SQL), hundreds of tables — some with hundreds of
 columns and millions of rows — shown to a small team of analysts/engineers and leadership to
 demonstrate what a **local LLM in a regulated enterprise environment** can do. These notes
@@ -18,7 +18,7 @@ volume. A few thousand chunks is comfortable for Chroma and for Open WebUI's bui
 
 ## The real enterprise difficulty: disambiguation
 
-At 20 mock tables, retrieval is nearly trivial. At Redwood scale the hard problem is
+At 20 mock tables, retrieval is nearly trivial. At production scale the hard problem is
 **disambiguation** — many similar tables/columns and many plausible join paths. Two levers solve
 this, and both are things to invest in deliberately:
 

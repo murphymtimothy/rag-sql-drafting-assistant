@@ -33,7 +33,7 @@ RERANKER_MODEL = os.environ.get("RAG_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 
 DEFAULT_K = 5  # final retrieved chunks handed to the model (Top-K)
 # Candidate-pool sizes for each retriever before fusion + rerank. At ~20 docs these
-# effectively grab everything; at Redwood scale (thousands of chunks) they are the
+# effectively grab everything; at production scale (thousands of chunks) they are the
 # recall knob — widen them and let the reranker do the precision work.
 K_DENSE = int(os.environ.get("RAG_K_DENSE", "20"))
 K_SPARSE = int(os.environ.get("RAG_K_SPARSE", "20"))
