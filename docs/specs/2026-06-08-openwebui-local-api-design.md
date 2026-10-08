@@ -19,7 +19,7 @@ The two paths are kept in sync today only by hand-copying ~8 settings into the O
 
 - **Ollama runs natively on the host** (`localhost:11434`), not in a container: the scripted path uses `http://localhost:11434/v1` (`sql_assistant.py:125`); Open WebUI reaches it via `http://host.docker.internal:11434` with `--add-host=host.docker.internal:host-gateway` (`OPEN_WEBUI_SETUP.md:25-35`).
 - **No compose stack / no Dockerfile exists.** Open WebUI is the only container, launched standalone. Host is Windows 11; Ollama uses the host GPU.
-- The cross-encoder reranker (`bge-reranker-v2-m3`) runs **in-process** and wants the GPU; GPU-in-container on Windows Docker Desktop is impractical and CPU reranking does not scale to Redwood's hundreds of tables.
+- The cross-encoder reranker (`bge-reranker-v2-m3`) runs **in-process** and wants the GPU; GPU-in-container on Windows Docker Desktop is impractical and CPU reranking does not scale to a production schema's hundreds of tables.
 
 ## Decisions (settled with the user)
 
@@ -35,7 +35,7 @@ The two paths are kept in sync today only by hand-copying ~8 settings into the O
 
 **Goals:** GUI uses `answer_question()` verbatim; validation verdict visible in the GUI; multi-turn refinement; no hand-synced retrieval settings; secured by a token; fully testable offline.
 
-**Non-goals (this iteration):** token-by-token streaming UX; containerization/compose (revisit if Redwood mandates it); replacing Ollama; auth beyond a shared token (no per-user identity); rate limiting.
+**Non-goals (this iteration):** token-by-token streaming UX; containerization/compose (revisit if the on-prem environment requires it); replacing Ollama; auth beyond a shared token (no per-user identity); rate limiting.
 
 ## Architecture
 
@@ -149,4 +149,4 @@ A live end-to-end check (real Ollama + index) is marked `@pytest.mark.integratio
 
 ## Out of scope / future
 
-Streaming generation UX; containerization (revisit for a Redwood compose+GPU stack); per-user auth; pointing the CLI/eval at the HTTP endpoint; rate limiting.
+Streaming generation UX; containerization (revisit for an on-prem compose+GPU stack); per-user auth; pointing the CLI/eval at the HTTP endpoint; rate limiting.
